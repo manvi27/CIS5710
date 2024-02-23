@@ -26,6 +26,21 @@ module RegFile (
 
   // TODO: your code here
 
+  assign regs[0] = 32'd0;
+  assign rs1_data = regs[rs1];
+  assign rs2_data = regs[rs2];
+  always_ff @(posedge clk) begin
+    
+    if(1'b1 == rst) begin
+      for(int i = 1;i < NumRegs; i = i+1) begin
+        regs[i] <= 32'd0; 
+      end
+    end 
+
+    if(we && (|rd) == 1'b1 ) begin
+      regs[rd] <= rd_data;
+    end
+  end
 endmodule
 
 module DatapathSingleCycle (
@@ -48,7 +63,19 @@ module DatapathSingleCycle (
   wire [2:0] insn_funct3;
   wire [4:0] insn_rd;
   wire [`OPCODE_SIZE] insn_opcode;
-
+  logic [`REG_SIZE] rs1_data, rs2_data, rd_data;
+  logic we;
+  RegFile rf(
+    .clk(clk),
+    .rst(rst),
+    .rd(insn_rd),
+    .rd_data(rd_data),
+    .rs1(insn_rs1),
+    .rs2(insn_rs2),
+    .rs1_data(rs1_data),
+    .rs2_data(rs2_data),
+    .we(we)
+  );
   // split R-type instruction - see section 2.2 of RiscV spec
   assign {insn_funct7, insn_rs2, insn_rs1, insn_funct3, insn_rd, insn_opcode} = insn_from_imem;
 
@@ -187,14 +214,91 @@ module DatapathSingleCycle (
   end
 
   logic illegal_insn;
+  wire [`REG_SIZE] addi_a,addi_b,addi_sum;
+  wire addi_cin;
+  assign addi_a = rs1_data;
+  assign addi_b = 32'(signed'(imm_i));
+  assign addi_cin = 1'b0;
+  cla cl_addi(.a(addi_a),.b(addi_b),.cin(addi_cin),.sum(addi_sum));
+  
+  // wire [`REG_SIZE] add_a,add_b,add_sum;
+  // wire add_cin;
+  // assign add_a = rs1_data;
+  // assign add_b = rs2_data;
+  // assign add_cin = 1'b0;
+  // cla cl_add(.a(add_a),.b(add_b),.cin(add_cin),.sum(add_sum));
+  
+  // wire [`REG_SIZE] sub_a,sub_b,sub_sum;
+  // wire sub_cin;
+  // assign sub_a = rs1_data;
+  // assign sub_b = rs2_data;
+  // assign sub_cin = 1'b0;
+  // cla cl_sub(.a(sub_a),.b(-sub_b),.cin(sub_cin),.sum(sub_sum));
 
+  
+ 
   always_comb begin
     illegal_insn = 1'b0;
-
+    we = 1'b0;
     case (insn_opcode)
       OpLui: begin
         // TODO: start here by implementing lui
+        we = 1'b1;
+        rd_data[31:12] = insn_from_imem[31:12];
+        rd_data[11:0] = 12'd0;
+        pcNext = pcCurrent + 4;
       end
+      OpRegImm: begin
+        if(insn_addi)
+        begin
+          we = 1'b1;
+          rd_data = addi_sum;
+        end
+        pcNext = pcCurrent + 4;
+      end
+      // OpRegReg: begin
+      //   we = 1'b1;
+      //   if(insn_add) begin
+      //     rd_data = add_sum;
+      //   end
+      //   if(insn_sub) begin
+      //     rd_data = sub_sum;
+      //   end
+      // end
+      OpBranch: begin
+        if(insn_beq) begin
+          if(rs1_data === rs2_data)
+              pcNext =  pcCurrent + 32'(signed'(imm_b<<<1));
+          else
+            pcNext = pcCurrent + 4;
+        end
+        if(insn_bne) begin
+          if(rs1_data != rs2_data)
+            pcNext =  pcCurrent + 32'(signed'(imm_b<<<1));
+          else
+            pcNext = pcCurrent + 4; end
+        if(insn_blt) begin
+            if($signed(rs1_data) < $signed(rs2_data))
+              pcNext =  pcCurrent + 32'(signed'(imm_b<<<1));
+            else  
+              pcNext = pcCurrent + 4; end
+        if(insn_bge)
+            if($signed(rs1_data) >= $signed(rs2_data))
+              pcNext =  pcCurrent + 32'(signed'(imm_b<<<1));
+            else
+              pcNext = pcCurrent + 4;
+        if(insn_bltu)
+            if(rs1_data < rs2_data)
+              pcNext =  pcCurrent + 32'(signed'(imm_b<<1));
+            else
+              pcNext = pcCurrent + 4;
+        if(insn_bgeu)
+            if(rs1_data >= rs2_data)
+              pcNext =  pcCurrent + 32'(signed'(imm_b<<1));
+            else
+              pcNext = pcCurrent + 4;
+      end
+    
       default: begin
         illegal_insn = 1'b1;
       end
@@ -328,5 +432,5 @@ module RiscvProcessor (
       .load_data_from_dmem(mem_data_loaded_value),
       .halt(halt)
   );
-
-endmodule
+    
+  endmodule
