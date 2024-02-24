@@ -219,23 +219,21 @@ module DatapathSingleCycle (
   assign addi_a = rs1_data;
   assign addi_b = 32'(signed'(imm_i));
   assign addi_cin = 1'b0;
-  cla cl_addi(.a(addi_a),.b(addi_b),.cin(addi_cin),.sum(addi_sum));
+  cla cl_addi(.a(addi_a),.b(addi_b),.cin(addi_cin),.sum(addi_sum));  
   
-  // wire [`REG_SIZE] add_a,add_b,add_sum;
-  // wire add_cin;
-  // assign add_a = rs1_data;
-  // assign add_b = rs2_data;
-  // assign add_cin = 1'b0;
-  // cla cl_add(.a(add_a),.b(add_b),.cin(add_cin),.sum(add_sum));
+  wire [`REG_SIZE] add_a,add_b,add_sum;
+  wire add_cin;
+  assign add_a = rs1_data;
+  assign add_b = rs2_data;
+  assign add_cin = 1'b0;
+  cla cl_add(.a(add_a),.b(add_b),.cin(add_cin),.sum(add_sum));  
   
-  // wire [`REG_SIZE] sub_a,sub_b,sub_sum;
-  // wire sub_cin;
-  // assign sub_a = rs1_data;
-  // assign sub_b = rs2_data;
-  // assign sub_cin = 1'b0;
-  // cla cl_sub(.a(sub_a),.b(-sub_b),.cin(sub_cin),.sum(sub_sum));
-
-  
+  wire [`REG_SIZE] sub_a,sub_b,sub_res;
+  wire sub_cin;
+  assign sub_a = rs1_data;
+  assign sub_b = -rs2_data;
+  assign sub_cin = 1'b0;
+  cla cl_sub(.a(sub_a),.b(sub_b),.cin(sub_cin),.sum(sub_res));  
  
   always_comb begin
     illegal_insn = 1'b0;
@@ -247,24 +245,40 @@ module DatapathSingleCycle (
         rd_data[31:12] = insn_from_imem[31:12];
         rd_data[11:0] = 12'd0;
         pcNext = pcCurrent + 4;
-      end
-      OpRegImm: begin
+      end  
+      OpRegImm:
+      begin
+        we = 1'b1;
         if(insn_addi)
         begin
-          we = 1'b1;
           rd_data = addi_sum;
+        end
+        else if (insn_slti) begin
+          rd_data = (rs1_data < 32'(signed'(imm_i)))?1:0;
+        end
+        else if (insn_sltiu) begin
+          rd_data = (rs1_data < 32'(unsigned'(imm_i)))?1:0;
+        end   
+        else if(insn_xori) begin
+          rd_data =  (rs1_data ^ 32'(signed'(imm_i)));
+        end      
+        else if(insn_ori) begin
+          rd_data = (rs1_data | 32'(signed'(imm_i)));
+        end
+        else if(insn_andi) begin
+          rd_data = (rs1_data & 32'(signed'(imm_i)));
+        end
+        else if(insn_slli) begin
+          rd_data = (rs1_data << 32'(signed'(imm_i)));
+        end
+        else if(insn_srli) begin
+          rd_data = (rs1_data >> 32'(signed'(imm_i)));
+        end
+        else if(insn_srai) begin
+          rd_data = (rs1_data >>> 32'(signed'(imm_i)));
         end
         pcNext = pcCurrent + 4;
       end
-      // OpRegReg: begin
-      //   we = 1'b1;
-      //   if(insn_add) begin
-      //     rd_data = add_sum;
-      //   end
-      //   if(insn_sub) begin
-      //     rd_data = sub_sum;
-      //   end
-      // end
       OpBranch: begin
         if(insn_beq) begin
           if(rs1_data === rs2_data)
@@ -278,33 +292,63 @@ module DatapathSingleCycle (
           else
             pcNext = pcCurrent + 4; end
         if(insn_blt) begin
-            if($signed(rs1_data) < $signed(rs2_data))
-              pcNext =  pcCurrent + 32'(signed'(imm_b<<<1));
-            else  
-              pcNext = pcCurrent + 4; end
+          if($signed(rs1_data) < $signed(rs2_data))
+            pcNext =  pcCurrent + 32'(signed'(imm_b<<<1));
+          else  
+            pcNext = pcCurrent + 4; 
+          end
         if(insn_bge)
-            if($signed(rs1_data) >= $signed(rs2_data))
-              pcNext =  pcCurrent + 32'(signed'(imm_b<<<1));
-            else
-              pcNext = pcCurrent + 4;
+          if($signed(rs1_data) >= $signed(rs2_data))
+            pcNext =  pcCurrent + 32'(signed'(imm_b<<<1));
+          else
+            pcNext = pcCurrent + 4;
         if(insn_bltu)
-            if(rs1_data < rs2_data)
-              pcNext =  pcCurrent + 32'(signed'(imm_b<<1));
-            else
-              pcNext = pcCurrent + 4;
+          if(rs1_data < rs2_data)
+            pcNext =  pcCurrent + 32'(signed'(imm_b<<1));
+          else
+            pcNext = pcCurrent + 4;
         if(insn_bgeu)
-            if(rs1_data >= rs2_data)
-              pcNext =  pcCurrent + 32'(signed'(imm_b<<1));
-            else
-              pcNext = pcCurrent + 4;
+          if(rs1_data >= rs2_data)
+            pcNext =  pcCurrent + 32'(signed'(imm_b<<1));
+          else
+            pcNext = pcCurrent + 4;
       end
-    
       default: begin
         illegal_insn = 1'b1;
       end
     endcase
-  end
 
+
+    if(insn_opcode == OpRegReg)
+    begin
+      illegal_insn = 1'b0;
+      we = 1'b1; 
+      if(insn_add)
+        rd_data = add_sum;
+      else if(insn_sub)
+        rd_data = sub_res;
+      else if(insn_sll)
+        rd_data = rs1_data <<< rs2_data;
+      else if(insn_slt)
+        rd_data = (rs1_data < rs2_data)?32'b1:32'b0;
+      else if(insn_sltu)
+        rd_data = rs1_data << rs2_data;
+      else if(insn_xor)
+        rd_data = rs1_data ^ rs2_data;
+      else if(insn_srl)
+        rd_data = rs1_data >>> rs2_data;
+      else if(insn_and)
+        rd_data = rs1_data & rs2_data;
+      else if(insn_or)
+        rd_data = rs1_data | rs2_data;
+      pcNext = pcCurrent + 4;
+    end
+    else if(insn_opcode == OpEnviron)
+    begin
+      illegal_insn = 1'b0;
+      halt = 1'b1;
+    end
+  end
 endmodule
 
 /* A memory module that supports 1-cycle reads and writes, with one read-only port
