@@ -121,10 +121,11 @@ module DatapathSingleCycle (
   logic [`REG_SIZE] rs1_data, rs2_data, rd_data;
 
   logic we;
-  //instance for regfile in datapath
+
+//instance for regfile in datapath
   RegFile rf(
 
-    .clk(clk), .rst(rst),  .we(we), .rd(insn_rd), .rd_data(rd_data), 
+    .clk(clk), .rst(rst),  .we(we), .rd(insn_rd), .rd_data(rd_data),
 
     .rs1(insn_rs1), .rs2(insn_rs2), .rs1_data(rs1_data),  .rs2_data(rs2_data)
 
@@ -412,7 +413,9 @@ module DatapathSingleCycle (
 
   logic [`REG_SIZE] add_sum;
 
+  logic [63:0] mul_res;
 
+  logic [31:0] add_bits;
   // RegFile rf(.rd(insn_rd), .rd_data(rd_data), .rs1(insn_rs1), .rs1_data(rs1_data), 
 
   //   .rs2(insn_rs2), .rs2_data(rs2_data), .clk(clk), .we(we) , .rst(rst));
@@ -470,20 +473,39 @@ module DatapathSingleCycle (
       we = 1'b0;
 
     end
-
-    if(OpStore == insn_opcode)
+  
+  if(OpStore == insn_opcode)
     begin
       halt = 1'b0;
       illegal_insn = 1'b0;
-      addr_to_dmem = rs1_data + imm_s_sext;
+      add_bits = (rs1_data + imm_i_sext);
+      addr_to_dmem = (add_bits)&(32'hFFFFFFFC);
       we = 1'b0;
       if(insn_sb) begin
-        store_data_to_dmem = {24'd0,rs2_data[7:0]};
+
         store_we_to_dmem = 4'b0001;
+        if(add_bits[1:0] == 2'b00) begin
+          store_data_to_dmem = 32'(unsigned'(load_data_from_dmem[7:0]));
+        end
+        else if(add_bits[1:0] == 2'b01) begin
+          store_data_to_dmem = 32'(unsigned'(load_data_from_dmem[15:8]));
+        end
+        else if(add_bits[1:0] == 2'b10) begin
+          store_data_to_dmem = 32'(unsigned'(load_data_from_dmem[23:16]));
+        end
+        else if(add_bits[1:0] == 2'b11) begin
+          store_data_to_dmem = 32'(unsigned'(load_data_from_dmem[31:24]));
+        end
       end
       else if(insn_sh) begin
-        store_data_to_dmem = {16'd0,rs2_data[15:0]};
         store_we_to_dmem = 4'b0011;
+        if(add_bits[1:0] == 2'b00) begin
+          store_data_to_dmem = 32'(unsigned'(load_data_from_dmem[15:0]));
+        end
+        else if(add_bits[1:0] == 2'b10) begin
+          store_data_to_dmem = 32'(unsigned'(load_data_from_dmem[31:16]));
+        end
+
       end
       else if(insn_sw) begin
         store_data_to_dmem = rs2_data;
@@ -493,25 +515,58 @@ module DatapathSingleCycle (
 
     if(OpLoad == insn_opcode)
     begin
-      addr_to_dmem = rs1_data + imm_i_sext;
+      add_bits = (rs1_data + imm_i_sext);
+      addr_to_dmem = (add_bits)&32'hFFFFFFFC;
       we = 1'b1;
       halt = 1'b0;
       illegal_insn = 1'b0;
       if(insn_lb == 1'b1)
       begin
-        rd_data = 32'(signed'(load_data_from_dmem[7:0]));
+        if(add_bits[1:0] == 2'b00) begin
+          rd_data = 32'(signed'(load_data_from_dmem[7:0]));
+        end
+        else if(add_bits[1:0] == 2'b01) begin
+          rd_data = 32'(signed'(load_data_from_dmem[15:8]));
+        end
+        else if(add_bits[1:0] == 2'b10) begin
+          rd_data = 32'(signed'(load_data_from_dmem[23:16]));
+        end
+        else if(add_bits[1:0] == 2'b11) begin
+          rd_data = 32'(signed'(load_data_from_dmem[31:24]));
+        end
       end
       else if(insn_lbu == 1'b1)
       begin
-        rd_data = 32'(unsigned'(load_data_from_dmem[7:0]));
+       if(add_bits[1:0] == 2'b00) begin
+          rd_data = 32'(unsigned'(load_data_from_dmem[7:0]));
+        end
+        else if(add_bits[1:0] == 2'b01) begin
+          rd_data = 32'(unsigned'(load_data_from_dmem[15:8]));
+        end
+        else if(add_bits[1:0] == 2'b10) begin
+          rd_data = 32'(unsigned'(load_data_from_dmem[23:16]));
+        end
+        else if(add_bits[1:0] == 2'b11) begin
+          rd_data = 32'(unsigned'(load_data_from_dmem[31:24]));
+        end
       end
       else if(insn_lh == 1'b1)
       begin
-        rd_data = 32'(signed'(load_data_from_dmem[15:0]));
+        if(add_bits[1:0] == 2'b00) begin
+          rd_data = 32'(signed'(load_data_from_dmem[15:0]));
+        end
+        else if(add_bits[1:0] == 2'b10) begin
+          rd_data = 32'(signed'(load_data_from_dmem[31:16]));
+        end
       end
       else if(insn_lhu == 1'b1)
       begin
-        rd_data = 32'(unsigned'(load_data_from_dmem[15:0]));
+        if(add_bits[1:0] == 2'b00) begin
+          rd_data = 32'(unsigned'(load_data_from_dmem[15:0]));
+        end
+        else if(add_bits[1:0] == 2'b10) begin
+          rd_data = 32'(unsigned'(load_data_from_dmem[31:16]));
+        end
       end
       else if(insn_lw == 1'b1)
       begin
@@ -524,21 +579,21 @@ module DatapathSingleCycle (
     begin
       we = 1'b1;
       halt = 1'b0;
-      rd_data = pcCurrent + 4;
-      pcNext = pcCurrent + imm_j_sext;
+      pcTemp = pcCurrent + imm_j_sext;
+      rd_data = pcCurrent + 2;
     end
     if(insn_jalr == 1'b1)
     begin
       we = 1'b1;
       halt = 1'b0;
-      rd_data = pcCurrent + 4;
-      pcNext = pcCurrent + imm_i_sext;
+      rd_data = pcCurrent + 2;
+      pcTemp = pcCurrent + imm_i_sext;
     end
     if(insn_auipc)
     begin
       we = 1'b1;
       halt = 1'b0;
-      rd_data = pcCurrent + 32'(unsigned'(insn_from_imem[31:12]));
+      rd_data = pcCurrent + {insn_from_imem[31:12],12'd0};
     end
 
     case (insn_opcode)
@@ -751,6 +806,12 @@ module DatapathSingleCycle (
             rd_data = quotient;
           else if(insn_remu == 1'b1)
             rd_data = remainder;
+        end
+
+        if(insn_mul == 1'b1) begin
+          we = 1'b1;
+          mul_res = 64'(signed'(rs1_data*rs2_data));
+          rd_data = mul_res[31:0];
         end
 
 
