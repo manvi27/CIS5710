@@ -478,34 +478,15 @@ module DatapathSingleCycle (
     begin
       halt = 1'b0;
       illegal_insn = 1'b0;
-      add_bits = (rs1_data + imm_i_sext);
-      addr_to_dmem = (add_bits)&(32'hFFFFFFFC);
+      addr_to_dmem = rs1_data + imm_s_sext;
       we = 1'b0;
       if(insn_sb) begin
-
+        store_data_to_dmem = {24'd0,rs2_data[7:0]};
         store_we_to_dmem = 4'b0001;
-        if(add_bits[1:0] == 2'b00) begin
-          store_data_to_dmem = 32'(unsigned'(load_data_from_dmem[7:0]));
-        end
-        else if(add_bits[1:0] == 2'b01) begin
-          store_data_to_dmem = 32'(unsigned'(load_data_from_dmem[15:8]));
-        end
-        else if(add_bits[1:0] == 2'b10) begin
-          store_data_to_dmem = 32'(unsigned'(load_data_from_dmem[23:16]));
-        end
-        else if(add_bits[1:0] == 2'b11) begin
-          store_data_to_dmem = 32'(unsigned'(load_data_from_dmem[31:24]));
-        end
       end
       else if(insn_sh) begin
+        store_data_to_dmem = {16'd0,rs2_data[15:0]};
         store_we_to_dmem = 4'b0011;
-        if(add_bits[1:0] == 2'b00) begin
-          store_data_to_dmem = 32'(unsigned'(load_data_from_dmem[15:0]));
-        end
-        else if(add_bits[1:0] == 2'b10) begin
-          store_data_to_dmem = 32'(unsigned'(load_data_from_dmem[31:16]));
-        end
-
       end
       else if(insn_sw) begin
         store_data_to_dmem = rs2_data;
