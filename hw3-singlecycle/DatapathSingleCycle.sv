@@ -364,14 +364,14 @@ module DatapathSingleCycle (
       we = 1'b1;
       halt = 1'b0;
       pcTemp = imm_j_sext;
-      rd_data = pcCurrent + 2;
+      rd_data = pcCurrent + 4;
     end
     if(insn_jalr == 1'b1)
     begin
       we = 1'b1;
       halt = 1'b0;
-      rd_data = pcCurrent + 2;
-      pcTemp = imm_i_sext;
+      rd_data = pcCurrent + 4;
+      pcTemp = rs1_data +imm_i_sext - pcCurrent;
     end
     if(insn_auipc)
     begin
