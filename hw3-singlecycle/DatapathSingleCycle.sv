@@ -229,17 +229,27 @@ module DatapathSingleCycle (
   logic [63:0] product;
   logic [31:0] product_signed;
   logic [63:0] product_final;
-  logic [31:0] add_bits;
+  logic [31:0] addr;
+  logic branch;
   // RegFile rf(.rd(insn_rd), .rd_data(rd_data), .rs1(insn_rs1), .rs1_data(rs1_data), 
   //   .rs2(insn_rs2), .rs2_data(rs2_data), .clk(clk), .we(we) , .rst(rst));
 
   cla add (.a(add_a), .b(add_b), .cin(add_cin), .sum(add_sum));
 
-  always_comb begin
+    always_comb begin
     illegal_insn = 1'b0;
     halt = 1'b0;
     we = 1'b0;
     add_cin = 1'b0;
+    branch = 1'b0;
+    addr = 32'h0;
+    store_we_to_dmem = 4'b0000;
+
+    if (insn_fence == 1'b1) begin
+      halt = 1'b1;
+      illegal_insn = 1'b0;
+      we = 1'b0;
+    end
 
     if (insn_bne == 1'b1) begin
       pcTemp = (rs1_data != rs2_data) ? imm_b_sext: 32'd4;
@@ -304,56 +314,56 @@ module DatapathSingleCycle (
     end
     else if(OpLoad == insn_opcode)
     begin
-      add_bits = (rs1_data + imm_i_sext);
-      addr_to_dmem = (add_bits)&32'hFFFFFFFC;
+      addr = (rs1_data + imm_i_sext);
+      addr_to_dmem = (addr)&32'hFFFFFFFC;
       we = 1'b1;
       halt = 1'b0;
       illegal_insn = 1'b0;
       if(insn_lb == 1'b1)
       begin
-        if(add_bits[1:0] == 2'b00) begin
+        if(addr[1:0] == 2'b00) begin
           rd_data = 32'(signed'(load_data_from_dmem[7:0]));
         end
-        else if(add_bits[1:0] == 2'b01) begin
+        else if(addr[1:0] == 2'b01) begin
           rd_data = 32'(signed'(load_data_from_dmem[15:8]));
         end
-        else if(add_bits[1:0] == 2'b10) begin
+        else if(addr[1:0] == 2'b10) begin
           rd_data = 32'(signed'(load_data_from_dmem[23:16]));
         end
-        else if(add_bits[1:0] == 2'b11) begin
+        else if(addr[1:0] == 2'b11) begin
           rd_data = 32'(signed'(load_data_from_dmem[31:24]));
         end
       end
       else if(insn_lbu == 1'b1)
       begin
-       if(add_bits[1:0] == 2'b00) begin
+       if(addr[1:0] == 2'b00) begin
           rd_data = 32'(unsigned'(load_data_from_dmem[7:0]));
         end
-        else if(add_bits[1:0] == 2'b01) begin
+        else if(addr[1:0] == 2'b01) begin
           rd_data = 32'(unsigned'(load_data_from_dmem[15:8]));
         end
-        else if(add_bits[1:0] == 2'b10) begin
+        else if(addr[1:0] == 2'b10) begin
           rd_data = 32'(unsigned'(load_data_from_dmem[23:16]));
         end
-        else if(add_bits[1:0] == 2'b11) begin
+        else if(addr[1:0] == 2'b11) begin
           rd_data = 32'(unsigned'(load_data_from_dmem[31:24]));
         end
       end
       else if(insn_lh == 1'b1)
       begin
-        if(add_bits[1:0] == 2'b00) begin
+        if(addr[1:0] == 2'b00) begin
           rd_data = 32'(signed'(load_data_from_dmem[15:0]));
         end
-        else if(add_bits[1:0] == 2'b10) begin
+        else if(addr[1:0] == 2'b10) begin
           rd_data = 32'(signed'(load_data_from_dmem[31:16]));
         end
       end
       else if(insn_lhu == 1'b1)
       begin
-        if(add_bits[1:0] == 2'b00) begin
+        if(addr[1:0] == 2'b00) begin
           rd_data = 32'(unsigned'(load_data_from_dmem[15:0]));
         end
-        else if(add_bits[1:0] == 2'b10) begin
+        else if(addr[1:0] == 2'b10) begin
           rd_data = 32'(unsigned'(load_data_from_dmem[31:16]));
         end
       end
@@ -365,32 +375,23 @@ module DatapathSingleCycle (
 
     else if(insn_jal == 1'b1)
     begin
-      we = 1'b1;
       halt = 1'b0;
       pcTemp = imm_j_sext;
       rd_data = pcCurrent + 4;
     end
-    else if(insn_jalr == 1'b1)
+    if(insn_jalr == 1'b1)
     begin
       we = 1'b1;
       halt = 1'b0;
       rd_data = pcCurrent + 4;
       pcTemp = rs1_data +imm_i_sext - pcCurrent;
     end
-    
-    else if(insn_auipc)
+    if(insn_auipc)
     begin
       we = 1'b1;
       halt = 1'b0;
       rd_data = pcCurrent + {insn_from_imem[31:12],12'd0};
     end
-
-    else if(insn_fence)
-    begin
-      halt = 1'b0;
-      illegal_insn = 1'b0;
-    end
-    else begin
     case (insn_opcode)
       OpLui : begin
         we = 1'b1;
@@ -442,7 +443,6 @@ module DatapathSingleCycle (
           we = 1'b1;
           rd_data = $signed(rs1_data) >>> imm_shamt;
         end
-
       end
 
       OpRegReg : begin
@@ -530,11 +530,10 @@ module DatapathSingleCycle (
 
         if (insn_div == 1'b1) begin
           rs1 = rs1_data[31];
-          rs2 = rs2_data[31]; // it's better if I do this inside the module
+          rs2 = rs2_data[31];
           zero_check = (rs1_data == 0) | (rs2_data == 0)  ;
           dividend = rs1_data[31] ? (~rs1_data + 1) : rs1_data;
           divisor = rs2_data[31] ? (~rs2_data + 1) : rs2_data;
-          // need check for zero condition
           rd_data = zero_check ? $signed(32'hFFFFFFFF) : ((rs1 != rs2) ? (~quotient + 1) : quotient); 
         end else if (insn_divu == 1'b1) begin
           zero_check = (rs1_data == 0) | (rs2_data == 0)  ;
@@ -543,13 +542,11 @@ module DatapathSingleCycle (
           rd_data = zero_check ? $signed(32'hFFFFFFFF) : quotient;
         end else if (insn_rem == 1'b1) begin
           rs1 = rs1_data[31];
-          rs2 = rs2_data[31]; // it's better if I do this inside the module
+          rs2 = rs2_data[31];
           zero_check = (rs1_data == 0) | (rs2_data == 0)  ;
           dividend = rs1_data[31] ? (~rs1_data + 1) : rs1_data;
           divisor = rs2_data[31] ? (~rs2_data + 1) : rs2_data;
-          // Determine if adjustment for signs is necessary
           if (!zero_check ) begin
-              // Adjust remainder sign to dividend
               rd_data = (rs1 == 1'b1)?(~remainder + 1):(remainder);
           end 
           else begin
@@ -568,9 +565,13 @@ module DatapathSingleCycle (
         illegal_insn = 1'b1;
       end
     endcase
+
+    if (branch == 1'b0) begin
+      pcNext = pcCurrent + pcTemp;
     end
-    pcNext = pcCurrent + pcTemp;
+  
   end
+  
 endmodule
 
 /* A memory module that supports 1-cycle reads and writes, with one read-only port
