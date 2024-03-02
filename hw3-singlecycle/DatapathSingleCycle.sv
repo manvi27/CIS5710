@@ -71,7 +71,8 @@ module DatapathSingleCycle (
     .rs1(insn_rs1), .rs2(insn_rs2), .rs1_data(rs1_data),  .rs2_data(rs2_data)
   );
   //instance for divider in datapath
-  logic [31:0] dividend,divisor,remainder,quotient;
+  logic [31:0] dividend, divisor, remainder, quotient;
+  logic zero_check, rs1, rs2;
   divider_unsigned divu(
     .i_dividend(dividend), .i_divisor(divisor), .o_remainder(remainder), .o_quotient(quotient)
   );
@@ -224,12 +225,15 @@ module DatapathSingleCycle (
   logic [`REG_SIZE]  add_a, add_b;
   logic add_cin;
   logic [`REG_SIZE] add_sum;
-  logic [63:0] mul_res;
+
+  logic [63:0] product;
+  logic [31:0] product_signed;
+  logic [63:0] product_final;
   logic [31:0] add_bits;
   // RegFile rf(.rd(insn_rd), .rd_data(rd_data), .rs1(insn_rs1), .rs1_data(rs1_data), 
   //   .rs2(insn_rs2), .rs2_data(rs2_data), .clk(clk), .we(we) , .rst(rst));
 
-  cla alu (.a(add_a), .b(add_b), .cin(add_cin), .sum(add_sum));
+  cla add (.a(add_a), .b(add_b), .cin(add_cin), .sum(add_sum));
 
   always_comb begin
     illegal_insn = 1'b0;
@@ -434,6 +438,8 @@ module DatapathSingleCycle (
       end
 
       OpRegReg : begin
+        we = 1'b1;
+
         if (insn_add == 1'b1) begin
           add_cin = 1'b0;
           we = 1'b1;
@@ -487,19 +493,62 @@ module DatapathSingleCycle (
           we = 1'b1;
           rd_data = rs1_data & rs2_data;
         end
-        if((insn_divu == 1'b1) || (insn_remu == 1'b1)) begin
-          we = 1'b1;
-          divisor = rs2_data;
-          dividend = rs1_data;
-          if(insn_divu == 1'b1)
-            rd_data = quotient;
-          else if(insn_remu == 1'b1)
-            rd_data = remainder;
+
+        if (insn_mul == 1'b1) begin
+          product = rs1_data * rs2_data;
+          rd_data = product[31:0];
+        end else if (insn_mulh == 1'b1) begin
+          product = $signed(rs1_data) * $signed(rs2_data);
+          rd_data = product[63:32];
+        end else if (insn_mulhsu == 1'b1) begin
+          if (rs1_data[31] == 1'b1) begin
+            product_signed = ~(rs1_data) + 32'b1;
+          end else begin
+            product_signed = rs1_data;
+          end
+
+          product = product_signed * rs2_data;
+
+          if (rs1_data[31] == 1'b1) begin
+            product_final = ~product + 64'b1;
+          end else begin
+            product_final = product;
+          end
+          rd_data = product_final[63:32];
+        end else if (insn_mulhu == 1'b1) begin
+          product = $unsigned(rs1_data) * $unsigned(rs2_data);
+          rd_data = product[63:32];
         end
-        if(insn_mul == 1'b1) begin
-          we = 1'b1;
-          mul_res = 64'(signed'(rs1_data*rs2_data));
-          rd_data = mul_res[31:0];
+
+        if (insn_div == 1'b1) begin
+          rs1 = rs1_data[31];
+          rs2 = rs2_data[31]; // it's better if I do this inside the module
+          zero_check = (rs1_data == 0) | (rs2_data == 0)  ;
+          dividend = rs1_data[31] ? (~rs1_data + 1) : rs1_data;
+          divisor = rs2_data[31] ? (~rs2_data + 1) : rs2_data;
+          // need check for zero condition
+          rd_data = zero_check ? $signed(32'hFFFFFFFF) : ((rs1 != rs2) ? (~quotient + 1) : quotient); 
+        end else if (insn_divu == 1'b1) begin
+          dividend = $unsigned(rs1_data);
+          divisor = $unsigned(rs2_data);
+          rd_data = quotient;
+        end else if (insn_rem == 1'b1) begin
+          rs1 = rs1_data[31];
+          rs2 = rs2_data[31]; // it's better if I do this inside the module
+          zero_check = (rs1_data == 0) | (rs2_data == 0)  ;
+          dividend = rs1_data[31] ? (~rs1_data + 1) : rs1_data;
+          divisor = rs2_data[31] ? (~rs2_data + 1) : rs2_data;
+          // Determine if adjustment for signs is necessary
+          if (!zero_check && (rs1 == 1'b1)) begin
+              // Adjust remainder sign to dividend
+              rd_data = ~remainder + 1;
+          end else begin
+              rd_data = remainder;
+          end
+        end else if (insn_remu == 1'b1) begin
+          dividend = $unsigned(rs1_data);
+          divisor = $unsigned(rs2_data);
+          rd_data = remainder;
         end
 
       end
@@ -528,16 +577,16 @@ module MemorySingleCycle #(
     // must always be aligned to a 4B boundary
     input wire [`REG_SIZE] pc_to_imem,
 
-    // the value at memory location pc_to_imem
+    // the vadde at memory location pc_to_imem
     output logic [`REG_SIZE] insn_from_imem,
 
     // must always be aligned to a 4B boundary
     input wire [`REG_SIZE] addr_to_dmem,
 
-    // the value at memory location addr_to_dmem
+    // the vadde at memory location addr_to_dmem
     output logic [`REG_SIZE] load_data_from_dmem,
 
-    // the value to be written to addr_to_dmem, controlled by store_we_to_dmem
+    // the vadde to be written to addr_to_dmem, controlled by store_we_to_dmem
     input wire [`REG_SIZE] store_data_to_dmem,
 
     // Each bit determines whether to write the corresponding byte of store_data_to_dmem to memory location addr_to_dmem.
@@ -583,7 +632,7 @@ module MemorySingleCycle #(
       if (store_we_to_dmem[3]) begin
         mem[addr_to_dmem[AddrMsb:AddrLsb]][31:24] <= store_data_to_dmem[31:24];
       end
-      // dmem is "read-first": read returns value before the write
+      // dmem is "read-first": read returns vadde before the write
       load_data_from_dmem <= mem[{addr_to_dmem[AddrMsb:AddrLsb]}];
     end
   end
@@ -609,7 +658,7 @@ module RiscvProcessor (
     output logic halt
 );
 
-  wire [`REG_SIZE] pc_to_imem, insn_from_imem, mem_data_addr, mem_data_loaded_value, mem_data_to_write;
+  wire [`REG_SIZE] pc_to_imem, insn_from_imem, mem_data_addr, mem_data_loaded_vadde, mem_data_to_write;
   wire [3:0] mem_data_we;
 
   MemorySingleCycle #(
@@ -622,7 +671,7 @@ module RiscvProcessor (
       .insn_from_imem(insn_from_imem),
       // dmem is read-write
       .addr_to_dmem(mem_data_addr),
-      .load_data_from_dmem(mem_data_loaded_value),
+      .load_data_from_dmem(mem_data_loaded_vadde),
       .store_data_to_dmem (mem_data_to_write),
       .store_we_to_dmem  (mem_data_we)
   );
@@ -635,7 +684,7 @@ module RiscvProcessor (
       .addr_to_dmem(mem_data_addr),
       .store_data_to_dmem(mem_data_to_write),
       .store_we_to_dmem(mem_data_we),
-      .load_data_from_dmem(mem_data_loaded_value),
+      .load_data_from_dmem(mem_data_loaded_vadde),
       .halt(halt)
   );
 
