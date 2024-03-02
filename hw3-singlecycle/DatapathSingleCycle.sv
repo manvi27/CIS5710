@@ -56,6 +56,8 @@ module DatapathSingleCycle (
     output wire [3:0] store_we_to_dmem
 );
 
+  logic [31:0] add_bits;
+
   // components of the instruction
   wire [6:0] insn_funct7;
   wire [4:0] insn_rs2;
@@ -375,6 +377,7 @@ module DatapathSingleCycle (
 
     else if(insn_jal == 1'b1)
     begin
+      we = 1'b1;
       halt = 1'b0;
       pcTemp = imm_j_sext;
       rd_data = pcCurrent + 4;
