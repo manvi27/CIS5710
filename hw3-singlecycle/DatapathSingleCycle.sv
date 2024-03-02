@@ -263,8 +263,7 @@ module DatapathSingleCycle (
       we = 1'b0;
     end
   
-  if(OpStore == insn_opcode)
-    begin
+    else if(OpStore == insn_opcode) begin
       halt = 1'b0;
       illegal_insn = 1'b0;
       add_bits = (rs1_data + imm_s_sext);
@@ -303,7 +302,7 @@ module DatapathSingleCycle (
         store_we_to_dmem = 4'b1111;
       end
     end
-    if(OpLoad == insn_opcode)
+    else if(OpLoad == insn_opcode)
     begin
       add_bits = (rs1_data + imm_i_sext);
       addr_to_dmem = (add_bits)&32'hFFFFFFFC;
@@ -363,26 +362,35 @@ module DatapathSingleCycle (
         rd_data = load_data_from_dmem;
       end
     end
-    if(insn_jal == 1'b1)
+
+    else if(insn_jal == 1'b1)
     begin
       we = 1'b1;
       halt = 1'b0;
       pcTemp = imm_j_sext;
       rd_data = pcCurrent + 4;
     end
-    if(insn_jalr == 1'b1)
+    else if(insn_jalr == 1'b1)
     begin
       we = 1'b1;
       halt = 1'b0;
       rd_data = pcCurrent + 4;
       pcTemp = rs1_data +imm_i_sext - pcCurrent;
     end
-    if(insn_auipc)
+    
+    else if(insn_auipc)
     begin
       we = 1'b1;
       halt = 1'b0;
       rd_data = pcCurrent + {insn_from_imem[31:12],12'd0};
     end
+
+    else if(insn_fence)
+    begin
+      halt = 1'b0;
+      illegal_insn = 1'b0;
+    end
+    else begin
     case (insn_opcode)
       OpLui : begin
         we = 1'b1;
@@ -529,9 +537,10 @@ module DatapathSingleCycle (
           // need check for zero condition
           rd_data = zero_check ? $signed(32'hFFFFFFFF) : ((rs1 != rs2) ? (~quotient + 1) : quotient); 
         end else if (insn_divu == 1'b1) begin
+          zero_check = (rs1_data == 0) | (rs2_data == 0)  ;
           dividend = $unsigned(rs1_data);
           divisor = $unsigned(rs2_data);
-          rd_data = quotient;
+          rd_data = zero_check ? $signed(32'hFFFFFFFF) : quotient;
         end else if (insn_rem == 1'b1) begin
           rs1 = rs1_data[31];
           rs2 = rs2_data[31]; // it's better if I do this inside the module
@@ -539,16 +548,18 @@ module DatapathSingleCycle (
           dividend = rs1_data[31] ? (~rs1_data + 1) : rs1_data;
           divisor = rs2_data[31] ? (~rs2_data + 1) : rs2_data;
           // Determine if adjustment for signs is necessary
-          if (!zero_check && (rs1 == 1'b1)) begin
+          if (!zero_check ) begin
               // Adjust remainder sign to dividend
-              rd_data = ~remainder + 1;
-          end else begin
-              rd_data = remainder;
+              rd_data = (rs1 == 1'b1)?(~remainder + 1):(remainder);
+          end 
+          else begin
+              rd_data = rs1_data[31] ? (~rs1_data + 1) : rs1_data;
           end
         end else if (insn_remu == 1'b1) begin
           dividend = $unsigned(rs1_data);
           divisor = $unsigned(rs2_data);
-          rd_data = remainder;
+          zero_check = (rs1_data == 0) | (rs2_data == 0)  ;
+          rd_data = (zero_check)?$unsigned(rs1_data):remainder;
         end
 
       end
@@ -557,7 +568,7 @@ module DatapathSingleCycle (
         illegal_insn = 1'b1;
       end
     endcase
-
+    end
     pcNext = pcCurrent + pcTemp;
   end
 endmodule
