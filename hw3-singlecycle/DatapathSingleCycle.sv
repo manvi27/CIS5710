@@ -248,7 +248,7 @@ module DatapathSingleCycle (
     store_we_to_dmem = 4'b0000;
 
     if (insn_fence == 1'b1) begin
-      halt = 1'b1;
+      // halt = 1'b1;
       illegal_insn = 1'b0;
       we = 1'b0;
     end
