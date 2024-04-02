@@ -261,19 +261,19 @@ module DatapathPipelined (
 );
 
   // opcodes - see section 19 of RiscV spec
-  localparam bit [`OPCODE_SIZE] OpcodeLoad = 7'b00_000_11;
-  localparam bit [`OPCODE_SIZE] OpcodeStore = 7'b01_000_11;
-  localparam bit [`OPCODE_SIZE] OpcodeBranch = 7'b11_000_11;
-  localparam bit [`OPCODE_SIZE] OpcodeJalr = 7'b11_001_11;
-  localparam bit [`OPCODE_SIZE] OpcodeMiscMem = 7'b00_011_11;
-  localparam bit [`OPCODE_SIZE] OpcodeJal = 7'b11_011_11;
+  localparam bit [`OPCODE_SIZE] OpcodeLoad = 7'b00_000_11;//0x03
+  localparam bit [`OPCODE_SIZE] OpcodeStore = 7'b01_000_11;//0x23
+  localparam bit [`OPCODE_SIZE] OpcodeBranch = 7'b11_000_11;//0x63
+  localparam bit [`OPCODE_SIZE] OpcodeJalr = 7'b11_001_11;//0x67
+  localparam bit [`OPCODE_SIZE] OpcodeMiscMem = 7'b00_011_11;//0x0f
+  localparam bit [`OPCODE_SIZE] OpcodeJal = 7'b11_011_11;//0x6f
 
-  localparam bit [`OPCODE_SIZE] OpcodeRegImm = 7'b00_100_11;
-  localparam bit [`OPCODE_SIZE] OpcodeRegReg = 7'b01_100_11;
-  localparam bit [`OPCODE_SIZE] OpcodeEnviron = 7'b11_100_11;
+  localparam bit [`OPCODE_SIZE] OpcodeRegImm = 7'b00_100_11;//0x13
+  localparam bit [`OPCODE_SIZE] OpcodeRegReg = 7'b01_100_11;//0x33
+  localparam bit [`OPCODE_SIZE] OpcodeEnviron = 7'b11_100_11;//0x73
 
-  localparam bit [`OPCODE_SIZE] OpcodeAuipc = 7'b00_101_11;
-  localparam bit [`OPCODE_SIZE] OpcodeLui = 7'b01_101_11;
+  localparam bit [`OPCODE_SIZE] OpcodeAuipc = 7'b00_101_11;//0x17
+  localparam bit [`OPCODE_SIZE] OpcodeLui = 7'b01_101_11;//0x37
 
   // cycle counter, not really part of any stage but useful for orienting within GtkWave
   // do not rename this as the testbench uses this value
@@ -303,7 +303,7 @@ module DatapathPipelined (
     end else begin
       cycleStatus <= CYCLE_NO_STALL;
       if (branch_taken) begin
-        pcCurr <= pcNext;
+        pcCurr <= pcNext; 
       end else begin
         pcCurr <= pcCurr + 4;
       end
@@ -312,7 +312,7 @@ module DatapathPipelined (
   // send PC to imem
   assign pc_to_imem = pcCurr;
   assign instr = insn_from_imem;
-
+  
   // Here's how to disassemble an insn into a string you can view in GtkWave.
   // Use PREFIX to provide a 1-character tag to identify which stage the insn comes from.
   wire [255:0] f_disasm;
@@ -450,6 +450,7 @@ module DatapathPipelined (
       begin
         if (branch_taken) begin
           stateD <= 0;
+          stateD.cycle_status <= CYCLE_TAKEN_BRANCH;
         end else begin
           stateD <= '{
           pc: pcCurr,
@@ -661,6 +662,7 @@ module DatapathPipelined (
       begin
         if (branch_taken) begin
             stateX <= 0;
+            stateX.cycle_status <= CYCLE_TAKEN_BRANCH;
         end else begin
             stateX <= tempStateX;
         end 
@@ -849,53 +851,6 @@ module DatapathPipelined (
         end      
       end 
 
-      
-
-      // if (insn_addi == 1'b1) begin
-      //     add_cin = 1'b0;
-      //     we = 1'b1;
-      //     add_a = rs1_data;
-      //     add_b = imm_i_sext;
-      //     rd_data = add_sum;
-      //   end 
-        
-      //   if (insn_slti == 1'b1) begin
-      //     we = 1'b1; 
-      //     rd_data = $signed(rs1_data) < $signed(imm_i_sext) ? 32'b1 : 32'b0;
-      //   end else if (insn_sltiu == 1'b1) begin
-      //     we = 1'b1; 
-      //     rd_data = $signed(rs1_data) < $unsigned(imm_i_sext) ? 32'b1 : 32'b0;
-      //   end
-
-      //   if (insn_xori == 1'b1) begin
-      //     we = 1'b1;
-      //     rd_data =  (rs1_data ^ 32'(signed'(imm_i)));
-      //   end
-
-      //   if (insn_ori == 1'b1) begin
-      //     we = 1'b1;
-      //     rd_data = (rs1_data | 32'(signed'(imm_i)));
-      //   end
-
-      //   if (insn_andi == 1'b1) begin
-      //     we = 1'b1;
-      //     rd_data =  (rs1_data & 32'(signed'(imm_i)));
-      //   end
-
-      //   if (insn_slli == 1'b1) begin 
-      //     we = 1'b1;
-      //     rd_data = (rs1_data << 32'(signed'(imm_i)));
-      //   end else if (insn_srli == 1'b1) begin
-      //     we = 1'b1;
-      //     rd_data = (rs1_data >> 32'(signed'(imm_i)));
-      //   end
-        
-      //   if (insn_srai == 1'b1) begin
-      //     we = 1'b1;
-      //     rd_data = $signed(rs1_data) >>> imm_shamt;
-      //   end
-
-
       OpcodeRegImm: begin 
         if(stateX.exe_control.insn_addi) begin 
           add_cin = 1'b0;
@@ -960,13 +915,6 @@ module DatapathPipelined (
           // we = 1'b1;
           rd_temp = x_rs1_data << x_rs2_data[4:0];
         end
-        // if (insn_slt == 1'b1) begin
-        //   we = 1'b1;
-        //   rd_data = $signed(x_rs1_data) < $signed(x_rs2_data) ? 32'b1 : 32'b0;
-        // end else if (insn_sltu == 1'b1) begin
-        //   we = 1'b1;
-        //   rd_data = x_rs1_data < $unsigned(x_rs2_data) ? 32'b1 : 32'b0;
-        // end
         else if(stateX.exe_control.insn_slt) begin  
           //   we = 1'b1;
           rd_temp = $signed(x_rs1_data) < $signed(x_rs2_data) ? 32'b1 : 32'b0;
@@ -995,62 +943,6 @@ module DatapathPipelined (
           //   we = 1'b1;
           rd_temp = x_rs1_data & x_rs2_data;
         end
-        // if (insn_mul == 1'b1) begin
-        //   product = x_rs1_data * x_rs2_data;
-        //   rd_data = product[31:0];
-        // end else if (insn_mulh == 1'b1) begin
-        //   product = $signed(x_rs1_data) * $signed(x_rs2_data);
-        //   rd_data = product[63:32];
-        // end else if (insn_mulhsu == 1'b1) begin
-        //   if (x_rs1_data[31] == 1'b1) begin
-        //     product_signed = ~(x_rs1_data) + 32'b1;
-        //   end else begin
-        //     product_signed = x_rs1_data;
-        //   end
-
-        //   product = product_signed * x_rs2_data;
-
-        //   if (x_rs1_data[31] == 1'b1) begin
-        //     product_final = ~product + 64'b1;
-        //   end else begin
-        //     product_final = product;
-        //   end
-        //   rd_data = product_final[63:32];
-        // end else if (insn_mulhu == 1'b1) begin
-        //   product = $unsigned(x_rs1_data) * $unsigned(x_rs2_data);
-        //   rd_data = product[63:32];
-        // end
-
-        // if (insn_div == 1'b1) begin
-        //   rs1 = x_rs1_data[31];
-        //   rs2 = x_rs2_data[31];
-        //   zero_check = (x_rs1_data == 0) | (x_rs2_data == 0)  ;
-        //   dividend = x_rs1_data[31] ? (~x_rs1_data + 1) : x_rs1_data;
-        //   divisor = x_rs2_data[31] ? (~x_rs2_data + 1) : x_rs2_data;
-        //   rd_data = zero_check ? $signed(32'hFFFFFFFF) : ((rs1 != rs2) ? (~quotient + 1) : quotient); 
-        // end else if (insn_divu == 1'b1) begin
-        //   zero_check = (x_rs1_data == 0) | (x_rs2_data == 0)  ;
-        //   dividend = $unsigned(x_rs1_data);
-        //   divisor = $unsigned(x_rs2_data);
-        //   rd_data = zero_check ? $signed(32'hFFFFFFFF) : quotient;
-        // end else if (insn_rem == 1'b1) begin
-        //   rs1 = x_rs1_data[31];
-        //   rs2 = x_rs2_data[31];
-        //   zero_check = (x_rs1_data == 0) | (x_rs2_data == 0)  ;
-        //   dividend = x_rs1_data[31] ? (~x_rs1_data + 1) : x_rs1_data;
-        //   divisor = x_rs2_data[31] ? (~x_rs2_data + 1) : x_rs2_data;
-        //   if (!zero_check ) begin
-        //       rd_data = (rs1 == 1'b1)?(~remainder + 1):(remainder);
-        //   end 
-        //   else begin
-        //       rd_data = x_rs1_data[31] ? (~x_rs1_data + 1) : x_rs1_data;
-        //   end
-        // end else if (insn_remu == 1'b1) begin
-        //   dividend = $unsigned(x_rs1_data);
-        //   divisor = $unsigned(x_rs2_data);
-        //   zero_check = (x_rs1_data == 0) | (x_rs2_data == 0)  ;
-        //   rd_data = (zero_check)?$unsigned(x_rs1_data):remainder;
-        // end
         else if(stateX.exe_control.insn_mul) begin 
           product = x_rs1_data * x_rs2_data;
           rd_temp = product[31:0];
@@ -1084,35 +976,14 @@ module DatapathPipelined (
           dividend = x_rs1_data[31] ? (~x_rs1_data + 1) : x_rs1_data;
           divisor = x_rs2_data[31] ? (~x_rs2_data + 1) : x_rs2_data;
           rd_temp = (x_rs1_data == 0 | x_rs2_data == 0) ? $signed(32'hFFFFFFFF) : ((div_rs1 != div_rs2) ? (~quotient + 1) : quotient); 
-          // end else if (insn_divu == 1'b1) begin
-          //   zero_check = (x_rs1_data == 0) | (x_rs2_data == 0)  ;
-          //   dividend = $unsigned(x_rs1_data);
-          //   divisor = $unsigned(x_rs2_data);
-          //   rd_temp = zero_check ? $signed(32'hFFFFFFFF) : quotient;
-          // end
+
         end
         else if(stateX.exe_control.insn_divu)begin 
           dividend = $unsigned(x_rs1_data);
           divisor = $unsigned(x_rs2_data);
           rd_temp = (x_rs1_data == 0 | x_rs2_data == 0) ? $signed(32'hFFFFFFFF) : quotient;
         end
-        //   rs1 = x_rs1_data[31];
-        //   rs2 = x_rs2_data[31];
-        //   zero_check = (x_rs1_data == 0) | (x_rs2_data == 0)  ;
-        //   dividend = x_rs1_data[31] ? (~x_rs1_data + 1) : x_rs1_data;
-        //   divisor = x_rs2_data[31] ? (~x_rs2_data + 1) : x_rs2_data;
-        //   if (!zero_check ) begin
-        //       rd_data = (rs1 == 1'b1)?(~remainder + 1):(remainder);
-        //   end 
-        //   else begin
-        //       rd_data = x_rs1_data[31] ? (~x_rs1_data + 1) : x_rs1_data;
-        //   end
-        // end else if (insn_remu == 1'b1) begin
-        //   dividend = $unsigned(x_rs1_data);
-        //   divisor = $unsigned(x_rs2_data);
-        //   zero_check = (x_rs1_data == 0) | (x_rs2_data == 0)  ;
-        //   rd_data = (zero_check)?$unsigned(x_rs1_data):remainder;
-        // end
+       
         else if (stateX.exe_control.insn_rem)begin 
           dividend = x_rs1_data[31] ? (~x_rs1_data + 1) : x_rs1_data;
           divisor = x_rs2_data[31] ? (~x_rs2_data + 1) : x_rs2_data;
@@ -1127,122 +998,6 @@ module DatapathPipelined (
         else begin 
           illegal_insn = 1'b1;
         end
-
-
-
-        // we = 1'b1;
-
-        // if (insn_add == 1'b1) begin
-        //   add_cin = 1'b0;
-        //   we = 1'b1;
-        //   add_a = x_rs1_data;
-        //   add_b = x_rs2_data;
-        //   rd_data = add_sum;
-        // end
-
-        // if (insn_sub == 1'b1) begin
-        //   add_cin = 1'b1;
-        //   we = 1'b1;
-        //   add_a = x_rs1_data;
-        //   add_b = ~x_rs2_data;
-        //   rd_data = add_sum;
-        // end
-
-        // if (insn_sll == 1'b1) begin
-        //   we = 1'b1;
-        //   rd_data = x_rs1_data << x_rs2_data[4:0];
-        // end
-
-        // if (insn_slt == 1'b1) begin
-        //   we = 1'b1;
-        //   rd_data = $signed(x_rs1_data) < $signed(x_rs2_data) ? 32'b1 : 32'b0;
-        // end else if (insn_sltu == 1'b1) begin
-        //   we = 1'b1;
-        //   rd_data = x_rs1_data < $unsigned(x_rs2_data) ? 32'b1 : 32'b0;
-        // end
-
-        // if (insn_xor == 1'b1) begin
-        //   we = 1'b1;
-        //   rd_data = x_rs1_data ^ x_rs2_data;
-        // end
-
-        // if (insn_srl == 1'b1) begin
-        //   we = 1'b1;
-        //   rd_data = x_rs1_data >> (x_rs2_data[4:0]);
-        // end
-        
-        // if (insn_sra == 1'b1) begin
-        //   we = 1'b1;
-        //   rd_data = $signed(x_rs1_data) >>> x_rs2_data[4:0];
-        // end
-
-        // if (insn_or == 1'b1) begin
-        //   we = 1'b1;
-        //   rd_data = x_rs1_data | x_rs2_data;
-        // end
-
-        // if (insn_and == 1'b1) begin
-        //   we = 1'b1;
-        //   rd_data = x_rs1_data & x_rs2_data;
-        // end
-
-        // if (insn_mul == 1'b1) begin
-        //   product = x_rs1_data * x_rs2_data;
-        //   rd_data = product[31:0];
-        // end else if (insn_mulh == 1'b1) begin
-        //   product = $signed(x_rs1_data) * $signed(x_rs2_data);
-        //   rd_data = product[63:32];
-        // end else if (insn_mulhsu == 1'b1) begin
-        //   if (x_rs1_data[31] == 1'b1) begin
-        //     product_signed = ~(x_rs1_data) + 32'b1;
-        //   end else begin
-        //     product_signed = x_rs1_data;
-        //   end
-
-        //   product = product_signed * x_rs2_data;
-
-        //   if (x_rs1_data[31] == 1'b1) begin
-        //     product_final = ~product + 64'b1;
-        //   end else begin
-        //     product_final = product;
-        //   end
-        //   rd_data = product_final[63:32];
-        // end else if (insn_mulhu == 1'b1) begin
-        //   product = $unsigned(x_rs1_data) * $unsigned(x_rs2_data);
-        //   rd_data = product[63:32];
-        // end
-
-        // if (insn_div == 1'b1) begin
-        //   rs1 = x_rs1_data[31];
-        //   rs2 = x_rs2_data[31];
-        //   zero_check = (x_rs1_data == 0) | (x_rs2_data == 0)  ;
-        //   dividend = x_rs1_data[31] ? (~x_rs1_data + 1) : x_rs1_data;
-        //   divisor = x_rs2_data[31] ? (~x_rs2_data + 1) : x_rs2_data;
-        //   rd_data = zero_check ? $signed(32'hFFFFFFFF) : ((rs1 != rs2) ? (~quotient + 1) : quotient); 
-        // end else if (insn_divu == 1'b1) begin
-        //   zero_check = (x_rs1_data == 0) | (x_rs2_data == 0)  ;
-        //   dividend = $unsigned(x_rs1_data);
-        //   divisor = $unsigned(x_rs2_data);
-        //   rd_data = zero_check ? $signed(32'hFFFFFFFF) : quotient;
-        // end else if (insn_rem == 1'b1) begin
-        //   rs1 = x_rs1_data[31];
-        //   rs2 = x_rs2_data[31];
-        //   zero_check = (x_rs1_data == 0) | (x_rs2_data == 0)  ;
-        //   dividend = x_rs1_data[31] ? (~x_rs1_data + 1) : x_rs1_data;
-        //   divisor = x_rs2_data[31] ? (~x_rs2_data + 1) : x_rs2_data;
-        //   if (!zero_check ) begin
-        //       rd_data = (rs1 == 1'b1)?(~remainder + 1):(remainder);
-        //   end 
-        //   else begin
-        //       rd_data = x_rs1_data[31] ? (~x_rs1_data + 1) : x_rs1_data;
-        //   end
-        // end else if (insn_remu == 1'b1) begin
-        //   dividend = $unsigned(x_rs1_data);
-        //   divisor = $unsigned(x_rs2_data);
-        //   zero_check = (x_rs1_data == 0) | (x_rs2_data == 0)  ;
-        //   rd_data = (zero_check)?$unsigned(x_rs1_data):remainder;
-        // end
-
       end
 
       OpcodeStore: begin
@@ -1363,13 +1118,14 @@ module DatapathPipelined (
       .disasm(wb_disasm)
   );
 
-  assign we = (stateW.insn_opcode == 7'h63 ||
-                  stateW.insn_opcode == 7'h23) ||
-                  (stateW.rd_no == 0)? 1'b0 : 1'b1;
+  assign we = (stateW.insn_opcode == OpcodeBranch ||
+                  stateW.insn_opcode == OpcodeStore) ||
+                  (stateW.rd_no == 0)? 1'b0 : 1'b1;//If not store or branch or rd_no is 0, we = 1
   assign halt = stateW.halt_sig;
 
   assign trace_writeback_cycle_status = stateW.cycle_status;
-
+  assign trace_writeback_pc = stateW.pc;
+  assign trace_writeback_insn = stateW.insn;
   // RegFile rf(.rd(stateW.rd_no),
   //           .rd_data(stateW.rd_val),
   //           .rs1(stateD.rs1_no),
