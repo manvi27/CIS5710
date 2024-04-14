@@ -237,6 +237,8 @@ typedef struct packed {
   logic [`REG_SIZE] rs2_data_temp;
   logic [`OPCODE_SIZE] insn_opcode;
   logic halt_sig;
+  logic [3:0] store_we_to_dmem;
+  logic [`REG_SIZE] store_data_to_dmem;
 } stage_write_t;
 
 
@@ -1002,6 +1004,8 @@ module DatapathPipelined (
       end
 
       OpcodeStore: begin
+        addr_to_dmem_temp =  ((stateM.insn_opcode == OpcodeLoad)&&
+                             (stateX.rs1_no == stateM.rd_no))?(rd_val_temp + stateX.imm_i_sext_X):(stateX.rs1_data_temp+stateX.imm_i_sext_X);
       end
 
       OpcodeLoad: begin
@@ -1023,7 +1027,10 @@ module DatapathPipelined (
   /****************/
   stage_memory_t stateM;
   logic [31:0] rd_val_temp;//Temporary variable to store the value to be written to the register file in memory stage
-  assign addr_to_dmem = stateM.addr_to_dmem;
+  logic [31:0]stateM_store_data_to_dmem;
+  logic [3:0]stateM_store_we_to_dmem; 
+  assign addr_to_dmem = stateM.addr_to_dmem&32'hFFFFFFFC;
+
   always_ff @(posedge clk) begin
     if (rst) begin
       stateM <= '{
@@ -1054,10 +1061,13 @@ module DatapathPipelined (
             rd_no: stateX.rd_no,
             rd_val: rd_temp,
             rs1_no: stateX.rs1_no,
-            rs1_data_temp: x_rs1_data,
+            rs1_data_temp:x_rs1_data,
             rs2_no: stateX.rs2_no,
-            rs2_data_temp: x_rs2_data,
-            addr_to_dmem: (stateX.insn_opcode == OpcodeLoad)?addr_to_dmem_temp:stateX.addr_to_dmem,
+            rs2_data_temp: ((stateW.insn_opcode == OpcodeLoad) && //WM bypass
+                            (stateM.insn_opcode == OpcodeStore)&&
+                            (stateW.rd_no == stateM.rs2_no))?stateW.rd_val:x_rs2_data,
+            addr_to_dmem: ((stateM.insn_opcode == OpcodeLoad)||
+                           (stateM.insn_opcode == OpcodeStore))?addr_to_dmem_temp:stateX.addr_to_dmem,
             store_we_to_dmem: stateX.store_we_to_dmem,
             store_data_to_dmem: stateX.store_data_to_dmem,
             insn_opcode: stateX.insn_opcode,
@@ -1079,6 +1089,7 @@ module DatapathPipelined (
   );
 
   always_latch begin
+  
     if(stateM.insn_opcode == OpcodeLoad) begin
       if(stateM.mem_control.insn_lb) begin
         if(stateM.addr_to_dmem[1:0] == 2'b00)
@@ -1116,7 +1127,41 @@ module DatapathPipelined (
         rd_val_temp = load_data_from_dmem;
       end
     end
+
     else if(stateM.insn_opcode == OpcodeStore) begin
+      if(stateM.mem_control.insn_sb) begin
+        if(stateM.addr_to_dmem[1:0] == 2'b00) begin
+          stateM_store_data_to_dmem[7:0] =  ((stateW.insn_opcode == OpcodeLoad)&&(stateW.rd_no == stateM.rs2_no))?rd_val_temp[7:0]:stateM.rs2_data_temp[7:0];
+          stateM_store_we_to_dmem = 4'b0001;
+        end
+        else if(stateM.addr_to_dmem[1:0] == 2'b01) begin
+          stateM_store_data_to_dmem[15:8] =  ((stateW.insn_opcode == OpcodeLoad)&&(stateW.rd_no == stateM.rs2_no))?rd_val_temp[7:0]:stateM.rs2_data_temp[7:0];
+          stateM_store_we_to_dmem = 4'b0010;
+        end
+        else if(stateM.addr_to_dmem[1:0] == 2'b10) begin
+          stateM_store_data_to_dmem[23:16] =  ((stateW.insn_opcode == OpcodeLoad)&&(stateW.rd_no == stateM.rs2_no))?rd_val_temp[7:0]:stateM.rs2_data_temp[7:0];
+          stateM_store_we_to_dmem = 4'b0100;
+        end
+        else if(stateM.addr_to_dmem[1:0] == 2'b11) begin
+          stateM_store_data_to_dmem[31:24] = ((stateW.insn_opcode == OpcodeLoad)&&(stateW.rd_no == stateM.rs2_no))?rd_val_temp[7:0]:stateM.rs2_data_temp[7:0];
+          stateM_store_we_to_dmem = 4'b1000;
+        end
+
+      end
+      else if(stateM.mem_control.insn_sh) begin
+        if(stateM.addr_to_dmem[1:0] == 2'b00) begin
+          stateM_store_data_to_dmem[15:0] =  ((stateW.insn_opcode == OpcodeLoad)&&(stateW.rd_no == stateM.rs2_no))?rd_val_temp[15:0]:stateM.rs2_data_temp[15:0];
+          stateM_store_we_to_dmem = 4'b0011;
+        end
+        else if(stateM.addr_to_dmem[1:0] == 2'b10) begin
+          stateM_store_data_to_dmem[31:16] =  ((stateW.insn_opcode == OpcodeLoad)&&(stateW.rd_no == stateM.rs2_no))?rd_val_temp[15:0]:stateM.rs2_data_temp[15:0];
+          stateM_store_we_to_dmem = 4'b1100;
+        end
+      end
+      else if(stateM.mem_control.insn_sw) begin
+        stateM_store_data_to_dmem =  ((stateW.insn_opcode == OpcodeLoad)&&(stateW.rd_no == stateM.rs2_no))?rd_val_temp:stateM.rs2_data_temp;
+        stateM_store_we_to_dmem = 4'b1111;
+      end
     end
   end
   
@@ -1139,7 +1184,9 @@ module DatapathPipelined (
         rs2_no: 0,
         rs2_data_temp: 0,
         insn_opcode: 0,
-        halt_sig: 0
+        halt_sig: 0,
+        store_data_to_dmem:'{default:0},
+        store_we_to_dmem:'{default:0}
       };
     end else begin
       begin
@@ -1154,7 +1201,9 @@ module DatapathPipelined (
           rs2_no: stateM.rs2_no,
           rs2_data_temp: stateM.rs2_data_temp,
           insn_opcode: stateM.insn_opcode,
-          halt_sig: stateM.halt_sig
+          halt_sig: stateM.halt_sig,
+          store_data_to_dmem: stateM_store_data_to_dmem,
+          store_we_to_dmem: stateM_store_we_to_dmem
         };
       end
     end
@@ -1167,6 +1216,8 @@ module DatapathPipelined (
       .insn  (stateW.insn),
       .disasm(wb_disasm)
   );
+  assign store_data_to_dmem = stateW.store_data_to_dmem;
+  assign store_we_to_dmem = stateW.store_we_to_dmem;
   assign we = (stateW.insn_opcode == OpcodeBranch ||
                   stateW.insn_opcode == OpcodeStore) ||
                   (stateW.rd_no == 0)? 1'b0 : 1'b1;//If not store or branch or rd_no is 0, we = 1
