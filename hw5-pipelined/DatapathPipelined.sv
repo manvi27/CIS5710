@@ -307,11 +307,16 @@ module DatapathPipelined (
       cycleStatus <= CYCLE_NO_STALL;
       if (branch_taken) begin
         pcCurr <= pcNext; 
-      end else begin
-        pcCurr <= pcCurr + 4;
+      end 
+      else if(StallCycle_Count[1:0] != 2'b00) begin
+        pcCurr <= pcNext;
       end
+      else
+        pcCurr <= pcCurr + 4;    
     end
   end
+
+
   // send PC to imem
   assign pc_to_imem = pcCurr;
   assign instr = insn_from_imem;
@@ -384,7 +389,6 @@ module DatapathPipelined (
   logic [`REG_SIZE] x_rs2_data;
   logic [3:0] mux_val_mx_wx;
   logic zero_check, div_rs1, div_rs2;
-
   assign {insn7bit,
           insn_rs2,
           insn_rs1,
@@ -474,7 +478,20 @@ module DatapathPipelined (
           insn_opcode: insn_opcode,
           exe_control: '{default:0}
         };
-        end 
+        end
+        if(stateD.insn_opcode == OpcodeMiscMem) begin
+          if(insnSetX.insn_fence) begin
+            if(stateX.insn_opcode == OpcodeStore)
+              StallCycle_Count <= 2'b11;
+            else if(stateM.insn_opcode == OpcodeStore)
+              StallCycle_Count <= 2'b10;
+            else if(stateW.insn_opcode == OpcodeStore)
+              StallCycle_Count <= 2'b01;
+          end
+
+        end
+        StallCycle_Count <= (StallCycle_Count[1:0] != 2'b00)?(StallCycle_Count - 1):StallCycle_Count;
+
       end
     end
   end
@@ -564,6 +581,7 @@ module DatapathPipelined (
   assign insnSetX.insn_ecall = stateD.insn_opcode == OpcodeEnviron && stateD.insn_imem[31:7] == 25'd0;
   assign insnSetX.insn_fence = stateD.insn_opcode == OpcodeMiscMem;
 
+  logic [1:0] StallCycle_Count;
   always_comb begin
     if (insnSetX.insn_jalr ||
         insnSetX.insn_addi ||
@@ -593,7 +611,7 @@ module DatapathPipelined (
              (stateD.insn_opcode == OpcodeAuipc)) begin
       imm_i_sext_X = imm_u_ext;
     end
-
+    
     rs1_mux_data = rs1_data_temp;
     rs2_mux_data = rs2_data_temp;
 
@@ -739,7 +757,7 @@ module DatapathPipelined (
     end
 
     add_cin = 1'b0;
-    pcNext = 0;
+    pcNext = (StallCycle_Count[1:0] != 2'b00)?pcCurr:0;
     rd_temp = 32'd0;
     divisor = 32'b0;
     dividend = 32'b0;
@@ -1012,6 +1030,7 @@ module DatapathPipelined (
         addr_to_dmem_temp = stateX.rs1_data_temp + stateX.imm_i_sext_X;
       end
 
+      
       default: begin
         illegal_insn = 1'b1;
       end 
