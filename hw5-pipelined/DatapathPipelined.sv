@@ -221,6 +221,7 @@ typedef struct packed {
   logic halt_sig;
   logic branch_taken;
   logic [`REG_SIZE] pcNext;
+  insn_set mem_control;
 } stage_memory_t;
 
 /** state at the start of Write stage */
@@ -315,7 +316,6 @@ module DatapathPipelined (
   
   // Here's how to disassemble an insn into a string you can view in GtkWave.
   // Use PREFIX to provide a 1-character tag to identify which stage the insn comes from.
-  wire [255:0] f_disasm;
   wire [255:0] f_disasm;
   Disasm #(
       .PREFIX("F")
@@ -457,13 +457,13 @@ module DatapathPipelined (
           pc: pcCurr,
           insn: instr,
           cycle_status: cycleStatus,
-          rd_no: insn_opcode == 7'h63 ? 0 : insn_rd,
-          rs1_no: insn_opcode == 7'h37 ? 0: insn_rs1,
+          rd_no: insn_opcode == OpcodeBranch ? 0 : insn_rd,
+          rs1_no: insn_opcode == OpcodeLui ? 0: insn_rs1,
           rs1_data_temp: rs1_data_temp,
-          rs2_no: ((insn_opcode == 7'h13) || (insn_opcode == 7'h37)) ? 0: insn_rs2,
+          rs2_no: ((insn_opcode == OpcodeRegImm) || (insn_opcode == OpcodeLui)) ? 0: insn_rs2,
           rs2_data_temp: rs2_data_temp,
-          insn7bit: insn_opcode == 7'h37 ? 0: insn7bit,
-          insn3bit: insn_opcode == 7'h37 ? 0: insn3bit,
+          insn7bit: insn_opcode == OpcodeLui ? 0: insn7bit,
+          insn3bit: insn_opcode == OpcodeLui ? 0: insn3bit,
           addr_to_dmem: 0,
           store_we_to_dmem: 0,
           store_data_to_dmem: 0,
@@ -476,7 +476,6 @@ module DatapathPipelined (
       end
     end
   end
-  wire [255:0] d_disasm;
   wire [255:0] d_disasm;
   Disasm #(
       .PREFIX("D")
@@ -679,28 +678,28 @@ module DatapathPipelined (
       .insn  (stateX.insn),
       .disasm(e_disasm)
   );
-
+  logic [31:0] addr_to_dmem_temp;
   assign m_rd_no = stateM.rd_no;
   assign w_rd_no = stateW.rd_no;
   assign x_rs1_no = stateX.rs1_no;
   assign x_rs2_no = stateX.rs2_no;
   assign insn_opcode_x = stateX.insn_opcode;
 
-  always_comb begin
+  always_latch begin
     x_rs1_data = stateX.rs1_data_temp;
     x_rs2_data = stateX.rs2_data_temp;
 
     mux_val_mx_wx = 0;
-
+  
     if (m_rd_no != 0 || w_rd_no != 0) begin
       if (m_rd_no != 0) begin
         if (m_rd_no == x_rs1_no && m_rd_no != x_rs2_no) begin
           mux_val_mx_wx = 1;
-          x_rs1_data = stateM.rd_val;
+          x_rs1_data = (stateM.insn_opcode == OpcodeLoad)?rd_val_temp:stateM.rd_val;
         end
         if (m_rd_no == x_rs2_no && m_rd_no != x_rs1_no) begin
           mux_val_mx_wx = 2;
-          x_rs2_data = stateM.rd_val;
+          x_rs2_data = (stateM.insn_opcode == OpcodeLoad)?rd_val_temp:stateM.rd_val;
         end
         if (m_rd_no == x_rs1_no && m_rd_no == x_rs2_no) begin
             mux_val_mx_wx = 3;
@@ -1006,6 +1005,7 @@ module DatapathPipelined (
       end
 
       OpcodeLoad: begin
+        addr_to_dmem_temp = stateX.rs1_data_temp + stateX.imm_i_sext_X;
       end
 
       default: begin
@@ -1022,6 +1022,8 @@ module DatapathPipelined (
   /* MEMORY STAGE */
   /****************/
   stage_memory_t stateM;
+  logic [31:0] rd_val_temp;//Temporary variable to store the value to be written to the register file in memory stage
+  assign addr_to_dmem = stateM.addr_to_dmem;
   always_ff @(posedge clk) begin
     if (rst) begin
       stateM <= '{
@@ -1040,30 +1042,33 @@ module DatapathPipelined (
         insn_opcode: 0,
         halt_sig: 0,
         branch_taken: 0,
-        pcNext: 0
+        pcNext: 0,
+        mem_control: '{default:0}
       };
     end else begin
       begin
-        stateM <= '{
-          pc: stateX.pc,
-          insn: stateX.insn,
-          cycle_status: stateX.cycle_status,
-          rd_no: stateX.rd_no,
-          rd_val: rd_temp,
-          rs1_no: stateX.rs1_no,
-          rs1_data_temp: x_rs1_data,
-          rs2_no: stateX.rs2_no,
-          rs2_data_temp: x_rs2_data,
-          addr_to_dmem: stateX.addr_to_dmem,
-          store_we_to_dmem: stateX.store_we_to_dmem,
-          store_data_to_dmem: stateX.store_data_to_dmem,
-          insn_opcode: stateX.insn_opcode,
-          halt_sig: halt_sig_temp,
-          branch_taken: branch_taken,
-          pcNext: pcNext
-        };
+          stateM <= '{
+            pc: stateX.pc,
+            insn: stateX.insn,
+            cycle_status: stateX.cycle_status,
+            rd_no: stateX.rd_no,
+            rd_val: rd_temp,
+            rs1_no: stateX.rs1_no,
+            rs1_data_temp: x_rs1_data,
+            rs2_no: stateX.rs2_no,
+            rs2_data_temp: x_rs2_data,
+            addr_to_dmem: (stateX.insn_opcode == OpcodeLoad)?addr_to_dmem_temp:stateX.addr_to_dmem,
+            store_we_to_dmem: stateX.store_we_to_dmem,
+            store_data_to_dmem: stateX.store_data_to_dmem,
+            insn_opcode: stateX.insn_opcode,
+            halt_sig: halt_sig_temp,
+            branch_taken: branch_taken,
+            pcNext: pcNext,
+            mem_control: stateX.exe_control
+          };
       end
     end
+    
   end
   wire [255:0] m_disasm;
   Disasm #(
@@ -1072,6 +1077,49 @@ module DatapathPipelined (
       .insn  (stateM.insn),
       .disasm(m_disasm)
   );
+
+  always_latch begin
+    if(stateM.insn_opcode == OpcodeLoad) begin
+      if(stateM.mem_control.insn_lb) begin
+        if(stateM.addr_to_dmem[1:0] == 2'b00)
+          rd_val_temp = 32'(signed'(load_data_from_dmem[7:0]));
+        else if(stateM.addr_to_dmem[1:0] == 2'b01)
+          rd_val_temp =32'(signed'( load_data_from_dmem[15:8]));
+        else if(stateM.addr_to_dmem[1:0] == 2'b10)
+          rd_val_temp = 32'(signed'(load_data_from_dmem[23:16]));
+        else if(stateM.addr_to_dmem[1:0] == 2'b11)
+          rd_val_temp = 32'(signed'(load_data_from_dmem[31:24]));
+      end
+      else if(stateM.mem_control.insn_lbu) begin
+        if(stateM.addr_to_dmem[1:0] == 2'b00)
+          rd_val_temp = 32'(unsigned'(load_data_from_dmem[7:0]));
+        else if(stateM.addr_to_dmem[1:0] == 2'b01)
+          rd_val_temp = 32'(unsigned'(load_data_from_dmem[15:8]));
+        else if(stateM.addr_to_dmem[1:0] == 2'b10)
+          rd_val_temp = 32'(unsigned'(load_data_from_dmem[23:16]));
+        else if(stateM.addr_to_dmem[1:0] == 2'b11)
+          rd_val_temp = 32'(unsigned'(load_data_from_dmem[31:24]));
+      end
+      else if(stateM.mem_control.insn_lh) begin
+        if(stateM.addr_to_dmem[1:0] == 2'b00)
+          rd_val_temp = 32'(signed'(load_data_from_dmem[15:0]));
+        else if(stateM.addr_to_dmem[1:0] == 2'b10)
+          rd_val_temp = 32'(signed'(load_data_from_dmem[31:16]));
+      end
+      else if(stateM.mem_control.insn_lhu) begin
+        if(stateM.addr_to_dmem[1:0] == 2'b00)
+          rd_val_temp = 32'(unsigned'(load_data_from_dmem[15:0]));
+        else if(stateM.addr_to_dmem[1:0] == 2'b10)
+          rd_val_temp = 32'(unsigned'(load_data_from_dmem[31:16]));
+      end
+      else if(stateM.mem_control.insn_lw) begin
+        rd_val_temp = load_data_from_dmem;
+      end
+    end
+    else if(stateM.insn_opcode == OpcodeStore) begin
+    end
+  end
+  
 
   /****************/
   /* WRITEBACK STAGE */
@@ -1100,7 +1148,7 @@ module DatapathPipelined (
           insn: stateM.insn,
           cycle_status: stateM.cycle_status,
           rd_no: stateM.rd_no,
-          rd_val: stateM.rd_val,
+          rd_val: (stateM.insn_opcode == OpcodeLoad)?rd_val_temp:stateM.rd_val,
           rs1_no: stateM.rs1_no,
           rs1_data_temp: stateM.rs1_data_temp,
           rs2_no: stateM.rs2_no,
@@ -1119,7 +1167,6 @@ module DatapathPipelined (
       .insn  (stateW.insn),
       .disasm(wb_disasm)
   );
-
   assign we = (stateW.insn_opcode == OpcodeBranch ||
                   stateW.insn_opcode == OpcodeStore) ||
                   (stateW.rd_no == 0)? 1'b0 : 1'b1;//If not store or branch or rd_no is 0, we = 1
@@ -1128,28 +1175,6 @@ module DatapathPipelined (
   assign trace_writeback_cycle_status = stateW.cycle_status;
   assign trace_writeback_pc = stateW.pc;
   assign trace_writeback_insn = stateW.insn;
-  // RegFile rf(.rd(stateW.rd_no),
-  //           .rd_data(stateW.rd_val),
-  //           .rs1(stateD.rs1_no),
-  //           .x_rs1_data(rs1_data_temp), 
-  //           .rs2(stateD.rs2_no),
-  //           .x_rs2_data(rs2_data_temp),
-  //           .clk(clk),
-  //           .we(we),
-  //           .rst(rst));
-
-  // cla alu (.a(add_a),
-  //         .b(add_b),
-  //         .cin(add_cin),
-  //         .sum(add_sum));
-
-  // divider_unsigned_pipelined div(.clk(clk),
-  //                               .rst(rst),
-  //                               .i_dividend(dividend),
-  //                               .i_divisor(divisor),
-  //                               .o_quotient(quotient),
-  //                               .o_remainder(remainder));
-
 endmodule
 
 module MemorySingleCycle #(
