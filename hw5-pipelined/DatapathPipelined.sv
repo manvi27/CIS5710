@@ -220,6 +220,7 @@ typedef struct packed {
   logic [`OPCODE_SIZE] insn_opcode_M;
   logic halt_sig_M;
   logic branch_taken_M;
+  logic [`REG_SIZE] address_bits_M;
   logic [`REG_SIZE] pcNext_M;
   insn_set mem_control_M;
 } stage_memory_t;
@@ -297,6 +298,9 @@ module DatapathPipelined (
   logic [`REG_SIZE] pcNext;
   wire [`REG_SIZE] instr;
   cycle_status_e cycleStatus;
+  logic [`REG_SIZE] fetch_pc_pass;
+  logic [`REG_SIZE] fetch_insn_pass;
+  cycle_status_e f_cycle_status, fetch_cycle_status_pass;
 
   // program counter
   always_ff @(posedge clk) begin
@@ -308,8 +312,11 @@ module DatapathPipelined (
       if (branch_taken) begin
         pcCurr <= pcNext; 
       end 
-      else if(IsStallTrue == 1'b0)  begin
-        pcCurr <= pcCurr + 4; 
+      else if(fenceStall || divStall || loadStall)  begin
+        // pcCurr <= pcCurr + 4; 
+      end
+      else begin
+        pcCurr <= pcCurr + 4;
       end
     end
   end
@@ -318,6 +325,18 @@ module DatapathPipelined (
   // send PC to imem
   assign pc_to_imem = pcCurr;
   assign instr = insn_from_imem;
+
+  always_comb begin
+    if(branch_taken == 1'b1) begin
+      fetch_cycle_status_pass = CYCLE_TAKEN_BRANCH;
+      fetch_insn_pass = 32'b0;
+      fetch_pc_pass = 32'b0;
+    end else begin
+      fetch_cycle_status_pass = cycleStatus;
+      fetch_insn_pass = instr;
+      fetch_pc_pass = pcCurr;
+    end
+  end
   
   // Here's how to disassemble an insn into a string you can view in GtkWave.
   // Use PREFIX to provide a 1-character tag to identify which stage the insn comes from.
@@ -389,14 +408,14 @@ module DatapathPipelined (
   logic zero_check, div_rs1, div_rs2;
   logic rs1d, rs2d;
 
-  logic IsStallTrue = 1'b0;
-  assign IsStallTrue = ((stateD.insn_opcode_D == OpcodeMiscMem)&&((stateX.insn_opcode_X == OpcodeStore)||(stateM.insn_opcode_M == OpcodeStore)));
+  // logic IsStallTrue = 1'b0;
+  // assign IsStallTrue = ((stateD.insn_opcode_D == OpcodeMiscMem)&&((stateX.insn_opcode_X == OpcodeStore)||(stateM.insn_opcode_M == OpcodeStore)));
   assign {insn7bit,
           insn_rs2,
           insn_rs1,
           insn3bit,
           insn_rd,
-          insn_opcode} = insn_from_imem;
+          insn_opcode} = fetch_insn_pass;// = insn_from_imem;
 
   assign {imm_b_temp[12],
           imm_b_temp[10:5]} = insn7bit,
@@ -457,33 +476,69 @@ module DatapathPipelined (
       };
     end else begin
       begin
-        if (branch_taken) begin
+        // if (branch_taken) begin
+        //   stateD <= 0;
+        //   stateD.cycle_status_D <= CYCLE_TAKEN_BRANCH;
+        // end else begin
+        if (branch_taken == 1'b1) begin
           stateD <= 0;
-          stateD.cycle_status_D <= CYCLE_TAKEN_BRANCH;
+          stateD.pc_D <= fetch_pc_pass;
+          stateD.insn_D <= fetch_insn_pass;
+          stateD.cycle_status_D <= fetch_cycle_status_pass;
+        end if (loadStall || divStall || fenceStall) begin
+        //   stateD <= 0;
+        //   stateD.pc <= fetch_pc_pass;
+        //   decode_stateDstate.insn <= fetch_insn_pass;
+        //   stateD.cycle_status_D <= fetch_cycle_status_pass;
+        //end if (mux_fence == 1'b1) begin
+            //execute_state <= 0;
+
+        // stateD <= '{
+        //     pc_D: pcCurr,
+        //     insn_D: instr,
+        //     cycle_status_D: cycleStatus,
+        //     rd_no_D: insn_opcode == OpcodeBranch ? 0 : insn_rd,
+      
+        //     rs1_no_D: insn_opcode == OpcodeLui ? 0: insn_rs1,
+        //     rs1_data_temp_D: rs1_data_temp,
+        //     rs2_no_D: ((insn_opcode == OpcodeRegImm) || (insn_opcode == OpcodeLui)) ? 0: insn_rs2,
+        //     rs2_data_temp_D: rs2_data_temp,
+        //     insn7bit_D: insn_opcode == OpcodeLui ? 0: insn7bit,
+        //     insn3bit_D: insn_opcode == OpcodeLui ? 0: insn3bit,
+        //     addr_to_dmem_D: 0,
+        //     store_we_to_dmem_D: 0,
+        //     store_data_to_dmem_D: 0,
+        //     insn_imem_D: insn_from_imem,
+        //     imm_i_sext_D: 0,
+        //     insn_opcode_D: insn_opcode,
+        //     dec_control_D: '{default:0}
+        //   };
+
         end else begin
-           begin     
-            if(IsStallTrue == 1'b0)           
-              stateD <= '{
-              pc_D: pcCurr,
-              insn_D: instr,
-              cycle_status_D: cycleStatus,
-              rd_no_D: insn_opcode == OpcodeBranch ? 0 : insn_rd,
-       
-              rs1_no_D: insn_opcode == OpcodeLui ? 0: insn_rs1,
-              rs1_data_temp_D: rs1_data_temp,
-              rs2_no_D: ((insn_opcode == OpcodeRegImm) || (insn_opcode == OpcodeLui)) ? 0: insn_rs2,
-              rs2_data_temp_D: rs2_data_temp,
-              insn7bit_D: insn_opcode == OpcodeLui ? 0: insn7bit,
-              insn3bit_D: insn_opcode == OpcodeLui ? 0: insn3bit,
-              addr_to_dmem_D: 0,
-              store_we_to_dmem_D: 0,
-              store_data_to_dmem_D: 0,
-              insn_imem_D: insn_from_imem,
-              imm_i_sext_D: 0,
-              insn_opcode_D: insn_opcode,
-              dec_control_D: '{default:0}
-            };
-          end
+            stateD <= '{
+            pc_D: fetch_pc_pass,
+            insn_D: fetch_insn_pass,
+            cycle_status_D: fetch_cycle_status_pass,
+            rd_no_D: ((insn_opcode == 7'h63) || (insn_opcode == 7'h23)) ? 0 : insn_rd,
+      
+            rs1_no_D: insn_opcode == 7'h37 || insn_opcode == 7'h6f ? 0: insn_rs1,
+            rs1_data_temp_D: 0,
+            rs2_no_D: ((insn_opcode == 7'h13) || (insn_opcode == 7'h37) || 
+                  (insn_opcode == 7'h3) || (insn_opcode == 7'h6f)) ? 0: insn_rs2,
+            rs2_data_temp_D: 0,
+            insn7bit_D: ((insn_opcode == 7'h37) || (insn_opcode == 7'h3) ||
+                      (insn_opcode == 7'h37) || (insn_opcode == 7'h23)
+                      || (insn_opcode == 7'h6f )) ? 0: insn7bit,
+            insn3bit_D: insn_opcode == 7'h37 || insn_opcode == 7'h6f ? 0: insn3bit,
+            // insn_funct3: insn_opcode == 7'h37 || insn_opcode == 7'h6f ? 0: insn_funct3,
+            addr_to_dmem_D: 0,
+            store_we_to_dmem_D: 0,
+            store_data_to_dmem_D: 0,
+            insn_imem_D: fetch_insn_pass,
+            imm_i_sext_D: 0,
+            insn_opcode_D: insn_opcode,
+            dec_control_D: '{default:0}
+          };
         end
       end
     end
@@ -501,7 +556,8 @@ module DatapathPipelined (
     logic [1:0] selectDivider;
   logic [`REG_SIZE] divMulticycle;
 
-  assign imm_s[11:5] = stateD.insn7bit_D, imm_s[4:0] = stateD.insn_imem_D[11:7];
+  // assign imm_s[11:5] = stateD.insn7bit_D, imm_s[4:0] = stateD.insn_imem_D[11:7];
+  assign imm_s[11:5] = stateD.insn_imem_D[31:25], imm_s[4:0] = stateD.insn_imem_D[11:7]; 
 
   assign {imm_b[12], imm_b[10:5]} = stateD.insn7bit_D, {imm_b[4:1], imm_b[11]} = stateD.insn_imem_D[11:7], imm_b[0] = 1'b0;
 
@@ -512,6 +568,8 @@ module DatapathPipelined (
   logic [1:0] mux_val_wd;
   logic [4:0] wd_rd_no;
   logic divStall;
+  logic fenceStall;
+  logic loadStall;
   assign wd_rd_no = stateW.rd_no_W;
 
   assign imm_i_sext = {{20{imm_i[11]}}, imm_i[11:0]};
@@ -577,6 +635,7 @@ module DatapathPipelined (
   assign insnSetX.insn_ecall = stateD.insn_opcode_D == OpcodeEnviron && stateD.insn_imem_D[31:7] == 25'd0;
   assign insnSetX.insn_fence = stateD.insn_opcode_D == OpcodeMiscMem;
   always_comb begin
+    imm_i_sext_X = 0;
     if (insnSetX.insn_jalr ||
         insnSetX.insn_addi ||
         insnSetX.insn_slti ||
@@ -615,16 +674,9 @@ module DatapathPipelined (
 
     mux_val_wd = 2'b0;
 
-    if (stateX.exe_control_X.insn_div ||
-        stateX.exe_control_X.insn_divu ||
-        stateX.exe_control_X.insn_rem ||
-        stateX.exe_control_X.insn_remu) begin
-      if (stateX.rd_no_X == stateD.rs1_no_D ||
-          stateX.rd_no_X == stateD.rs2_no_D) begin
-          divStall = 1'b1;
-          // execute_state_temp = 0;
-      end
-    end
+    loadStall = 1'b0;
+    divStall = 1'b0;
+    fenceStall = 1'b0;
 
     if (wd_rd_no != 0) begin
       case (wd_rd_no)
@@ -644,24 +696,62 @@ module DatapathPipelined (
       endcase
     end
 
-    tempStateX = '{
-      pc_X: stateD.pc_D,
-      insn_X: stateD.insn_D,
-      cycle_status_X: stateD.cycle_status_D,
-      rd_no_X: stateD.rd_no_D,
-      rd_val_X: 0,
-      rs1_no_X: stateD.rs1_no_D,
-      rs1_data_temp_X: rs1_mux_data,
-      rs2_no_X: stateD.rs2_no_D,
-      rs2_data_temp_X: rs2_mux_data,
-      addr_to_dmem_X: stateD.addr_to_dmem_D,
-      store_we_to_dmem_X: stateD.store_we_to_dmem_D,
-      store_data_to_dmem_X: stateD.store_data_to_dmem_D,
-      insn_imem_X: stateD.insn_imem_D,
-      imm_i_sext_X: imm_i_sext_X,
-      insn_opcode_X: stateD.insn_opcode_D,
-      exe_control_X: insnSetX
-    };
+    if (stateX.insn_opcode_X == OpcodeLoad &&
+        stateX.rd_no_X != 5'b0) begin
+      if (stateX.rd_no_X == stateD.rs1_no_D) begin
+            loadStall = 1'b1;
+            tempStateX = 0;
+      end else if (stateX.rd_no_X == stateD.rs2_no_D) begin
+          if (stateD.insn_opcode_D != OpcodeStore) begin
+            loadStall = 1'b1;
+            tempStateX = 0;
+          end
+      end
+    end
+
+    if (stateX.exe_control_X.insn_div ||
+        stateX.exe_control_X.insn_divu ||
+        stateX.exe_control_X.insn_rem ||
+        stateX.exe_control_X.insn_remu) begin
+      if (stateX.rd_no_X == stateD.rs1_no_D ||
+          stateX.rd_no_X == stateD.rs2_no_D) begin
+          divStall = 1'b1;
+          tempStateX = 0;
+      end
+    end
+
+    if (insnSetX.insn_fence == 1'b1) begin
+      if (stateX.insn_opcode_X == OpcodeStore ||
+          stateM.insn_opcode_M == OpcodeStore ) begin
+        fenceStall = 1'b1;
+        // tempStateX = 0;
+      end else begin
+        fenceStall = 1'b0;
+      end
+    end
+
+    if (branch_taken == 1'b1 || insnSetX.insn_fence == 1'b1) begin
+      tempStateX = 0;
+    end else begin
+      tempStateX = '{
+        pc_X: stateD.pc_D,
+        insn_X: stateD.insn_D,
+        cycle_status_X: stateD.cycle_status_D,
+        rd_no_X: stateD.rd_no_D,
+        rd_val_X: 0,
+        rs1_no_X: stateD.rs1_no_D,
+        rs1_data_temp_X: rs1_mux_data,
+        rs2_no_X: stateD.rs2_no_D,
+        rs2_data_temp_X: rs2_mux_data,
+        addr_to_dmem_X: stateD.addr_to_dmem_D,
+        store_we_to_dmem_X: stateD.store_we_to_dmem_D,
+        store_data_to_dmem_X: stateD.store_data_to_dmem_D,
+        insn_imem_X: stateD.insn_imem_D,
+        imm_i_sext_X: imm_i_sext_X,
+        insn_opcode_X: stateD.insn_opcode_D,
+        exe_control_X: insnSetX
+      };
+    end
   end
 
   /****************/
@@ -691,12 +781,22 @@ module DatapathPipelined (
         exe_control_X: '{default:0}
       };
     end else begin
+      begin
         if (branch_taken) begin
             stateX <= 0;
             stateX.cycle_status_X <= CYCLE_TAKEN_BRANCH;
+        end else if (loadStall) begin
+            stateX <= 0;
+            stateX.cycle_status_X <= CYCLE_LOAD2USE;
+        end else if (divStall) begin
+            stateX <= 0;
+            stateX.cycle_status_X <= CYCLE_DIV2USE;
+        end else if (fenceStall) begin
+            stateX <= 0;
+            stateX.cycle_status_X <= CYCLE_FENCEI;
         end else begin
-          if(IsStallTrue == 1'b0 ) 
-            stateX <= tempStateX;       
+            stateX <= tempStateX;
+        end
       end
     end
   end
@@ -708,7 +808,8 @@ module DatapathPipelined (
       .insn  (stateX.insn_X),
       .disasm(e_disasm)
   );
-  logic [31:0] addr_to_dmem_temp;
+  logic [31:0] address_bits_temp;
+  
   assign m_rd_no = stateM.rd_no_M;
   assign w_rd_no = stateW.rd_no_W;
   assign x_rs1_no = stateX.rs1_no_X;
@@ -721,49 +822,82 @@ module DatapathPipelined (
 
     mux_val_mx_wx = 0;
   
-    if (m_rd_no != 0 || w_rd_no != 0) begin
-      if (m_rd_no != 0) begin
-        if (m_rd_no == x_rs1_no && m_rd_no != x_rs2_no) begin
-          mux_val_mx_wx = 1;
-          x_rs1_data = (stateM.insn_opcode_M == OpcodeLoad)?rd_val_temp:stateM.rd_val_M;
-        end
-        if (m_rd_no == x_rs2_no && m_rd_no != x_rs1_no) begin
-          mux_val_mx_wx = 2;
-          x_rs2_data = (stateM.insn_opcode_M == OpcodeLoad)?rd_val_temp:stateM.rd_val_M;
-        end
-        if (m_rd_no == x_rs1_no && m_rd_no == x_rs2_no) begin
-            mux_val_mx_wx = 3;
-          x_rs1_data = stateM.rd_val_M;
-          x_rs2_data = stateM.rd_val_M;
-        end
-      end
-      if (w_rd_no != 0 && w_rd_no != m_rd_no) begin
-        if (w_rd_no == x_rs1_no && w_rd_no != x_rs2_no) begin
-          mux_val_mx_wx = 4;
-          x_rs1_data = stateW.rd_val_W;
-        end
-        if (w_rd_no == x_rs2_no && w_rd_no != x_rs1_no) begin
-          mux_val_mx_wx = 5;
-          x_rs2_data = stateW.rd_val_W;
-        end
-        if (w_rd_no == x_rs1_no && w_rd_no == x_rs2_no) begin
-            mux_val_mx_wx = 6;
-          x_rs1_data = stateW.rd_val_W;
-          x_rs2_data = stateW.rd_val_W;
-        end
-        if (m_rd_no != 0 && w_rd_no != 0 && m_rd_no != w_rd_no) begin
-          if (m_rd_no == x_rs1_no && w_rd_no == x_rs2_no && x_rs1_no != x_rs2_no) begin
-            mux_val_mx_wx = 7;
-            x_rs1_data = stateM.rd_val_M;
-            x_rs2_data = stateW.rd_val_W;
+    // if (m_rd_no != 0 || w_rd_no != 0) begin
+    //   if (m_rd_no != 0) begin
+    //     if (m_rd_no == x_rs1_no && m_rd_no != x_rs2_no) begin
+    //       mux_val_mx_wx = 1;
+    //       x_rs1_data = (stateM.insn_opcode_M == OpcodeLoad)?rd_val_temp:stateM.rd_val_M;
+    //     end
+    //     if (m_rd_no == x_rs2_no && m_rd_no != x_rs1_no) begin
+    //       mux_val_mx_wx = 2;
+    //       x_rs2_data = (stateM.insn_opcode_M == OpcodeLoad)?rd_val_temp:stateM.rd_val_M;
+    //     end
+    //     if (m_rd_no == x_rs1_no && m_rd_no == x_rs2_no) begin
+    //         mux_val_mx_wx = 3;
+    //       x_rs1_data = stateM.rd_val_M;
+    //       x_rs2_data = stateM.rd_val_M;
+    //     end
+    //   end
+    //   if (w_rd_no != 0 && w_rd_no != m_rd_no) begin
+    //     if (w_rd_no == x_rs1_no && w_rd_no != x_rs2_no) begin
+    //       mux_val_mx_wx = 4;
+    //       x_rs1_data = stateW.rd_val_W;
+    //     end
+    //     if (w_rd_no == x_rs2_no && w_rd_no != x_rs1_no) begin
+    //       mux_val_mx_wx = 5;
+    //       x_rs2_data = stateW.rd_val_W;
+    //     end
+    //     if (w_rd_no == x_rs1_no && w_rd_no == x_rs2_no) begin
+    //         mux_val_mx_wx = 6;
+    //       x_rs1_data = stateW.rd_val_W;
+    //       x_rs2_data = stateW.rd_val_W;
+    //     end
+    //     if (m_rd_no != 0 && w_rd_no != 0 && m_rd_no != w_rd_no) begin
+    //       if (m_rd_no == x_rs1_no && w_rd_no == x_rs2_no && x_rs1_no != x_rs2_no) begin
+    //         mux_val_mx_wx = 7;
+    //         x_rs1_data = stateM.rd_val_M;
+    //         x_rs2_data = stateW.rd_val_W;
 
-          end
-          if (m_rd_no == x_rs2_no && w_rd_no == x_rs1_no && x_rs1_no != x_rs2_no) begin
-            mux_val_mx_wx = 8;
-            x_rs2_data = stateM.rd_val_M;
-            x_rs1_data = stateW.rd_val_W;
-          end
-        end
+    //       end
+    //       if (m_rd_no == x_rs2_no && w_rd_no == x_rs1_no && x_rs1_no != x_rs2_no) begin
+    //         mux_val_mx_wx = 8;
+    //         x_rs2_data = stateM.rd_val_M;
+    //         x_rs1_data = stateW.rd_val_W;
+    //       end
+    //     end
+    //   end
+    // end
+
+    if (m_rd_no != 0 || w_rd_no != 0) begin
+      if (m_rd_no == x_rs1_no && m_rd_no != x_rs2_no && m_rd_no != 0) begin
+        mux_val_mx_wx = 1;
+        x_rs1_data = stateM.rd_val_M;
+      end if (m_rd_no == x_rs2_no && m_rd_no != x_rs1_no && m_rd_no != 0) begin
+        mux_val_mx_wx = 2;
+        x_rs2_data = stateM.rd_val_M;
+      end if (m_rd_no == x_rs1_no && m_rd_no == x_rs2_no && m_rd_no != 0) begin
+        mux_val_mx_wx = 3;
+        x_rs1_data = stateM.rd_val_M;
+        x_rs2_data = stateM.rd_val_M;
+      end if (w_rd_no == x_rs1_no && w_rd_no != x_rs2_no && w_rd_no != m_rd_no && w_rd_no != 0) begin
+        mux_val_mx_wx = 4;
+        x_rs1_data = stateW.rd_val_W;
+      end if (w_rd_no == x_rs2_no && w_rd_no != x_rs1_no && w_rd_no != m_rd_no && w_rd_no != 0) begin
+        mux_val_mx_wx = 5;
+        x_rs2_data = stateW.rd_val_W;
+      end if (w_rd_no == x_rs1_no && w_rd_no == x_rs2_no && w_rd_no != m_rd_no && w_rd_no != 0) begin
+        mux_val_mx_wx = 6;
+        x_rs2_data = stateW.rd_val_W;
+        x_rs1_data = stateW.rd_val_W;
+        // edited: case for handling double bypass
+      end if (m_rd_no == x_rs1_no && w_rd_no == x_rs2_no && x_rs1_no != x_rs2_no && (w_rd_no != 0 && m_rd_no != 0)) begin
+        mux_val_mx_wx = 7;
+        x_rs1_data = stateM.rd_val_M;
+        x_rs2_data = stateW.rd_val_W;
+      end if (m_rd_no == x_rs2_no && w_rd_no == x_rs1_no && x_rs1_no != x_rs2_no && (w_rd_no != 0 && m_rd_no != 0)) begin
+        mux_val_mx_wx = 8;
+        x_rs2_data = stateM.rd_val_M;
+        x_rs1_data = stateW.rd_val_W;
       end
     end
 
@@ -779,10 +913,12 @@ module DatapathPipelined (
     product_final = 64'b0;
     add_a = $signed(x_rs1_data);
     add_b = $signed(x_rs2_data);
+    address_bits_temp = 32'b0;
+    // addr_to_dmem_temp = 32'b0;
 
     case (insn_opcode_x)
       OpcodeMiscMem: begin
-        addr_to_dmem_temp = stateX.addr_to_dmem_X;
+        // addr_to_dmem_temp = stateX.addr_to_dmem_X;
 
         if(stateX.exe_control_X.insn_fence) begin 
           //we = 1'b0;
@@ -792,7 +928,7 @@ module DatapathPipelined (
       end
       
       OpcodeEnviron: begin
-        addr_to_dmem_temp = stateX.addr_to_dmem_X;
+        // addr_to_dmem_temp = stateX.addr_to_dmem_X;
 
             if(stateX.exe_control_X.insn_ecall) begin
               halt_sig_temp = 1'b1;
@@ -800,7 +936,7 @@ module DatapathPipelined (
         end
 
       OpcodeLui: begin
-        addr_to_dmem_temp = stateX.addr_to_dmem_X;
+        // addr_to_dmem_temp = stateX.addr_to_dmem_X;
 
         if(stateX.rd_no_X == 5'b0)
           rd_temp = 32'b0;
@@ -811,7 +947,7 @@ module DatapathPipelined (
       end
 
       OpcodeJal: begin
-        addr_to_dmem_temp = stateX.addr_to_dmem_X;
+        // addr_to_dmem_temp = stateX.addr_to_dmem_X;
 
         if (stateX.exe_control_X.insn_jal) begin
           rd_temp = stateX.pc_X + 32'd4;
@@ -824,7 +960,7 @@ module DatapathPipelined (
       end
 
       OpcodeJalr: begin
-        addr_to_dmem_temp = stateX.addr_to_dmem_X;
+        // addr_to_dmem_temp = stateX.addr_to_dmem_X;
 
         if (stateX.exe_control_X.insn_jalr) begin 
           rd_temp = stateX.pc_X + 32'd4;
@@ -837,14 +973,14 @@ module DatapathPipelined (
       end 
 
       OpcodeAuipc: begin
-        addr_to_dmem_temp = stateX.addr_to_dmem_X;
+        // addr_to_dmem_temp = stateX.addr_to_dmem_X;
 
         rd_temp = stateX.pc_X + {stateX.insn_X[31:12],12'd0};
       end
 
 
       OpcodeBranch: begin
-        addr_to_dmem_temp = stateX.addr_to_dmem_X;
+        // addr_to_dmem_temp = stateX.addr_to_dmem_X;
 
         if(stateX.exe_control_X.insn_beq) begin 
           if(x_rs1_data == x_rs2_data) begin 
@@ -911,7 +1047,7 @@ module DatapathPipelined (
       end 
 
       OpcodeRegImm: begin 
-        addr_to_dmem_temp = stateX.addr_to_dmem_X;
+        // addr_to_dmem_temp = stateX.addr_to_dmem_X;
 
         if(stateX.exe_control_X.insn_addi) begin 
           add_cin = 1'b0;
@@ -966,7 +1102,7 @@ module DatapathPipelined (
       end
 
       OpcodeRegReg: begin
-        addr_to_dmem_temp = stateX.addr_to_dmem_X;
+        // addr_to_dmem_temp = stateX.addr_to_dmem_X;
         if(stateX.exe_control_X.insn_add) begin 
           add_cin = 1'b0;
           // we = 1'b1;
@@ -1068,7 +1204,7 @@ module DatapathPipelined (
           // zero_check = (x_rs1_data == 0) | (x_rs2_data == 0);
           dividend = x_rs1_data[31] ? (~x_rs1_data + 1) : x_rs1_data;
           divisor = x_rs2_data[31] ? (~x_rs2_data + 1) : x_rs2_data;
-          rd_temp = ((x_rs1_data == 0) | (x_rs2_data == 0)) ? $signed(32'hFFFFFFFF) : ((x_rs1_data[31] != x_rs2_data[31]) ? (~quotient + 1) : quotient);
+          // rd_temp = ((x_rs1_data == 0) | (x_rs2_data == 0)) ? $signed(32'hFFFFFFFF) : ((x_rs1_data[31] != x_rs2_data[31]) ? (~quotient + 1) : quotient);
 
         end
         else if(stateX.exe_control_X.insn_divu) begin 
@@ -1096,24 +1232,24 @@ module DatapathPipelined (
       end
 
       OpcodeStore: begin
-        addr_to_dmem_temp =  ((stateM.insn_opcode_M == OpcodeLoad)&&
-                             (stateX.rs1_no_X == stateM.rd_no_M)) ?
-                             (rd_val_temp + stateX.imm_i_sext_X) :
-                             (stateX.rs1_data_temp_X+stateX.imm_i_sext_X);      
+        // address_bits_temp = stateX.rs1_data_temp_X + stateX.imm_i_sext_X;
+        // address_bits_temp = stateX.rs1_data_temp_X + stateX.imm_i_sext_X;
+        address_bits_temp = x_rs1_data + stateX.imm_i_sext_X;      
       end
 
       OpcodeLoad: begin
-         if(((stateM.insn_opcode_M == OpcodeRegReg) || (stateM.insn_opcode_M == OpcodeRegImm) && (stateM.rd_no_M == stateX.rs1_no_X))||
+        if(((stateM.insn_opcode_M == OpcodeRegReg) || (stateM.insn_opcode_M == OpcodeRegImm) && (stateM.rd_no_M == stateX.rs1_no_X))||
          ((stateW.insn_opcode_W == OpcodeRegReg) || (stateW.insn_opcode_W == OpcodeRegImm) && (stateW.rd_no_W == stateX.rs1_no_X)))
           begin
             if(stateM.rd_no_M == stateX.rs1_no_X)
-              addr_to_dmem_temp = stateM.rd_val_M+ stateX.imm_i_sext_X;
+              address_bits_temp = stateM.rd_val_M+ stateX.imm_i_sext_X;
             else if(stateW.rd_no_W == stateX.rs1_no_X)
-              addr_to_dmem_temp = stateW.rd_val_W + stateX.imm_i_sext_X;
+              address_bits_temp = stateW.rd_val_W + stateX.imm_i_sext_X;
           end
           
         else
-          addr_to_dmem_temp = stateX.rs1_data_temp_X + stateX.imm_i_sext_X;
+          address_bits_temp = stateX.rs1_data_temp_X + stateX.imm_i_sext_X;
+        // address_bits_temp = stateX.rs1_data_temp_X + stateX.imm_i_sext_X;
       end
 
       
@@ -1134,7 +1270,7 @@ module DatapathPipelined (
   logic [31:0] rd_val_temp;//Temporary variable to store the value to be written to the register file in memory stage
   logic [31:0]stateM_store_data_to_dmem;
   logic [3:0]stateM_store_we_to_dmem_M; 
-  assign addr_to_dmem = stateM.addr_to_dmem_M & 32'hFFFFFFFC;
+  // assign addr_to_dmem = stateM.addr_to_dmem_M & 32'hFFFFFFFC;
 
   always_ff @(posedge clk) begin
     if (rst) begin
@@ -1154,36 +1290,35 @@ module DatapathPipelined (
         insn_opcode_M: 0,
         halt_sig_M: 0,
         branch_taken_M: 0,
+        address_bits_M: 0,
         pcNext_M: 0,
         mem_control_M: '{default:0}
 
       };
     end else begin
       begin
-        
-            stateM <= '{
-              pc_M: stateX.pc_X,
-              insn_opcode_M: stateX.insn_opcode_X,
-              insn_M: stateX.insn_X,
-              cycle_status_M: stateX.cycle_status_X,
-              rd_no_M: stateX.rd_no_X,
-              rd_val_M: rd_temp,
-              rs1_no_M: stateX.rs1_no_X,
-              rs1_data_temp_M:x_rs1_data,
-              rs2_no_M: stateX.rs2_no_X,
-              rs2_data_temp_M: ((stateW.insn_opcode_W == OpcodeLoad) && //WM bypass
-                              (stateM.insn_opcode_M == OpcodeStore)&&
-                              (stateW.rd_no_W == stateM.rs2_no_M))?stateW.rd_val_W:x_rs2_data,
-              addr_to_dmem_M: addr_to_dmem_temp,
-              store_we_to_dmem_M: stateX.store_we_to_dmem_X,
-              store_data_to_dmem_M: stateX.store_data_to_dmem_X,
-              
-              halt_sig_M: halt_sig_temp,
-              branch_taken_M: branch_taken,
-              pcNext_M: pcNext,
-              mem_control_M: stateX.exe_control_X
-            };
-       
+        stateM <= '{
+          pc_M: stateX.pc_X,
+          insn_opcode_M: stateX.insn_opcode_X,
+          insn_M: stateX.insn_X,
+          cycle_status_M: stateX.cycle_status_X,
+          rd_no_M: stateX.rd_no_X,
+          rd_val_M: rd_temp,
+          rs1_no_M: stateX.rs1_no_X,
+          rs1_data_temp_M:x_rs1_data,
+          rs2_no_M: stateX.rs2_no_X,
+          rs2_data_temp_M: ((stateW.insn_opcode_W == OpcodeLoad) && //WM bypass
+                          (stateM.insn_opcode_M == OpcodeStore)&&
+                          (stateW.rd_no_W == stateM.rs2_no_M))?stateW.rd_val_W:x_rs2_data,
+          addr_to_dmem_M: addr_to_dmem_temp,
+          store_we_to_dmem_M: stateX.store_we_to_dmem_X,
+          store_data_to_dmem_M: stateX.store_data_to_dmem_X,
+          halt_sig_M: halt_sig_temp,
+          branch_taken_M: branch_taken,
+          address_bits_M: address_bits_temp,
+          pcNext_M: pcNext,
+          mem_control_M: stateX.exe_control_X
+        };
       end
     end
     
@@ -1196,11 +1331,42 @@ module DatapathPipelined (
       .disasm(m_disasm)
   );
 
+  logic [`REG_SIZE] addr_to_dmem_temp;
+  // logic [31:0] address_bits_temp;
+  logic [`REG_SIZE] rd_val_mem_temp;
+  logic [`REG_SIZE] rs1_val_temp;
+  logic [`REG_SIZE] rs2_val_temp;
+  logic [`REG_SIZE] store_data_temp_mem;
+  logic [`REG_SIZE] address_bits_mem;
+  logic [`REG_SIZE] store_data_to_dmem_temp;
+
+  // edited
+  logic [1:0] wm_mux;
+  logic [1:0] div_rem_mux;
+  logic [`REG_SIZE] div_rem_two_cycle_data;
+
   always_latch begin
   
     divMulticycle = 0;
-
+    address_bits_mem = stateM.address_bits_M;
     selectDivider = 0;
+
+    store_we_to_dmem_temp = 0;
+    
+    if (stateW.insn_opcode_W == OpcodeLoad && stateW.rd_no_W != 5'b0) begin
+      if (stateW.rd_no_W == stateM.rs2_no_M && stateW.rd_no_W != stateM.rs1_no_M) begin
+        wm_mux = 2'b01;
+        address_bits_mem = stateM.address_bits_M;
+      end else if (stateW.rd_no_W != stateM.rs2_no_M && stateW.rd_no_W == stateM.rs1_no_M) begin
+        wm_mux = 2'b10;
+        //address_bits_mem = stateW.rd_val_W;
+      end else if (stateW.rd_no_W == stateM.rs2_no_M && stateW.rd_no_W == stateM.rs1_no_M) begin
+        wm_mux = 2'b11;
+        //address_bits_mem = stateW.rd_val_W;
+        address_bits_mem = stateM.address_bits_M;
+      end
+    end
+
     if (stateM.mem_control_M.insn_div == 1'b1) begin
         //divMulticycle = o_quotient_temp;
         selectDivider = 2'b1;
@@ -1233,100 +1399,205 @@ module DatapathPipelined (
         selectDivider = 2'b10;
     end
     
-    if(stateM.insn_opcode_M == OpcodeLoad) begin
-      if(stateM.mem_control_M.insn_lb) begin
-        if(stateM.addr_to_dmem_M[1:0] == 2'b00)
-          rd_val_temp = 32'(signed'(load_data_from_dmem[7:0]));
-        else if(stateM.addr_to_dmem_M[1:0] == 2'b01)
-          rd_val_temp =32'(signed'( load_data_from_dmem[15:8]));
-        else if(stateM.addr_to_dmem_M[1:0] == 2'b10)
-          rd_val_temp = 32'(signed'(load_data_from_dmem[23:16]));
-        else if(stateM.addr_to_dmem_M[1:0] == 2'b11)
-          rd_val_temp = 32'(signed'(load_data_from_dmem[31:24]));
-      end
-      else if(stateM.mem_control_M.insn_lbu) begin
-        if(stateM.addr_to_dmem_M[1:0] == 2'b00)
-          rd_val_temp = 32'(unsigned'(load_data_from_dmem[7:0]));
-        else if(stateM.addr_to_dmem_M[1:0] == 2'b01)
-          rd_val_temp = 32'(unsigned'(load_data_from_dmem[15:8]));
-        else if(stateM.addr_to_dmem_M[1:0] == 2'b10)
-          rd_val_temp = 32'(unsigned'(load_data_from_dmem[23:16]));
-        else if(stateM.addr_to_dmem_M[1:0] == 2'b11)
-          rd_val_temp = 32'(unsigned'(load_data_from_dmem[31:24]));
-      end
-      else if(stateM.mem_control_M.insn_lh) begin
-        if(stateM.addr_to_dmem_M[1:0] == 2'b00)
-        rd_val_temp = 32'(signed'(load_data_from_dmem[15:0]));
-        else if(stateM.addr_to_dmem_M[1:0] == 2'b10)
-          rd_val_temp = 32'(signed'(load_data_from_dmem[31:16]));
-      end
-      else if(stateM.mem_control_M.insn_lhu) begin
-        if(stateM.addr_to_dmem_M[1:0] == 2'b00)
-          rd_val_temp = 32'(unsigned'(load_data_from_dmem[15:0]));
-        else if(stateM.addr_to_dmem_M[1:0] == 2'b10)
-          rd_val_temp = 32'(unsigned'(load_data_from_dmem[31:16]));
-      end
-      else if(stateM.mem_control_M.insn_lw) begin
-        rd_val_temp = load_data_from_dmem;
-      end
-    end
+    // if(stateM.insn_opcode_M == OpcodeLoad) begin
+    //   if(stateM.mem_control_M.insn_lb) begin
+    //     if(stateM.addr_to_dmem_M[1:0] == 2'b00)
+    //       rd_val_temp = 32'(signed'(load_data_from_dmem[7:0]));
+    //     else if(stateM.addr_to_dmem_M[1:0] == 2'b01)
+    //       rd_val_temp =32'(signed'( load_data_from_dmem[15:8]));
+    //     else if(stateM.addr_to_dmem_M[1:0] == 2'b10)
+    //       rd_val_temp = 32'(signed'(load_data_from_dmem[23:16]));
+    //     else if(stateM.addr_to_dmem_M[1:0] == 2'b11)
+    //       rd_val_temp = 32'(signed'(load_data_from_dmem[31:24]));
+    //   end
+    //   else if(stateM.mem_control_M.insn_lbu) begin
+    //     if(stateM.addr_to_dmem_M[1:0] == 2'b00)
+    //       rd_val_temp = 32'(unsigned'(load_data_from_dmem[7:0]));
+    //     else if(stateM.addr_to_dmem_M[1:0] == 2'b01)
+    //       rd_val_temp = 32'(unsigned'(load_data_from_dmem[15:8]));
+    //     else if(stateM.addr_to_dmem_M[1:0] == 2'b10)
+    //       rd_val_temp = 32'(unsigned'(load_data_from_dmem[23:16]));
+    //     else if(stateM.addr_to_dmem_M[1:0] == 2'b11)
+    //       rd_val_temp = 32'(unsigned'(load_data_from_dmem[31:24]));
+    //   end
+    //   else if(stateM.mem_control_M.insn_lh) begin
+    //     if(stateM.addr_to_dmem_M[1:0] == 2'b00)
+    //     rd_val_temp = 32'(signed'(load_data_from_dmem[15:0]));
+    //     else if(stateM.addr_to_dmem_M[1:0] == 2'b10)
+    //       rd_val_temp = 32'(signed'(load_data_from_dmem[31:16]));
+    //   end
+    //   else if(stateM.mem_control_M.insn_lhu) begin
+    //     if(stateM.addr_to_dmem_M[1:0] == 2'b00)
+    //       rd_val_temp = 32'(unsigned'(load_data_from_dmem[15:0]));
+    //     else if(stateM.addr_to_dmem_M[1:0] == 2'b10)
+    //       rd_val_temp = 32'(unsigned'(load_data_from_dmem[31:16]));
+    //   end
+    //   else if(stateM.mem_control_M.insn_lw) begin
+    //     rd_val_temp = load_data_from_dmem;
+    //   end
+    // end
 
-    else if(stateM.insn_opcode_M == OpcodeStore) begin
-      if(stateM.mem_control_M.insn_sb) begin
-        if(stateM.addr_to_dmem_M[1:0] == 2'b00) begin
-          stateM_store_data_to_dmem[7:0] =  ((stateW.insn_opcode_W == OpcodeLoad) &&
-                                              (stateW.rd_no_W == stateM.rs2_no_M)) ?
-                                                rd_val_temp[7:0] :
-                                                stateM.rs2_data_temp_M[7:0];
-          stateM_store_we_to_dmem_M = 4'b0001;
+    // else if(stateM.insn_opcode_M == OpcodeStore) begin
+    //   if(stateM.mem_control_M.insn_sb) begin
+    //     if(stateM.addr_to_dmem_M[1:0] == 2'b00) begin
+    //       stateM_store_data_to_dmem[7:0] =  ((stateW.insn_opcode_W == OpcodeLoad) &&
+    //                                           (stateW.rd_no_W == stateM.rs2_no_M)) ?
+    //                                             rd_val_temp[7:0] :
+    //                                             stateM.rs2_data_temp_M[7:0];
+    //       stateM_store_we_to_dmem_M = 4'b0001;
+    //     end
+    //     else if(stateM.addr_to_dmem_M[1:0] == 2'b01) begin
+    //       stateM_store_data_to_dmem[15:8] =  ((stateW.insn_opcode_W == OpcodeLoad) &&
+    //                                           (stateW.rd_no_W == stateM.rs2_no_M)) ?
+    //                                           rd_val_temp[7:0] :
+    //                                           stateM.rs2_data_temp_M[7:0];
+    //       stateM_store_we_to_dmem_M = 4'b0010;
+    //     end
+    //     else if(stateM.addr_to_dmem_M[1:0] == 2'b10) begin
+    //       stateM_store_data_to_dmem[23:16] = ((stateW.insn_opcode_W == OpcodeLoad) &&
+    //                                           (stateW.rd_no_W == stateM.rs2_no_M)) ?
+    //                                           rd_val_temp[7:0] :
+    //                                           stateM.rs2_data_temp_M[7:0];
+    //       stateM_store_we_to_dmem_M = 4'b0100;
+    //     end
+    //     else if(stateM.addr_to_dmem_M[1:0] == 2'b11) begin
+    //       stateM_store_data_to_dmem[31:24] = ((stateW.insn_opcode_W == OpcodeLoad) &&
+    //                                           (stateW.rd_no_W == stateM.rs2_no_M)) ?
+    //                                           rd_val_temp[7:0] :
+    //                                           stateM.rs2_data_temp_M[7:0];
+    //       stateM_store_we_to_dmem_M = 4'b1000;
+    //     end
+    //   end
+    //   else if(stateM.mem_control_M.insn_sh) begin
+    //     if(stateM.addr_to_dmem_M[1:0] == 2'b00) begin
+    //       stateM_store_data_to_dmem[15:0] =  ((stateW.insn_opcode_W == OpcodeLoad) &&
+    //                                           (stateW.rd_no_W == stateM.rs2_no_M)) ?
+    //                                           rd_val_temp[15:0] :
+    //                                           stateM.rs2_data_temp_M[15:0];
+    //       stateM_store_we_to_dmem_M = 4'b0011;
+    //     end
+    //     else if(stateM.addr_to_dmem_M[1:0] == 2'b10) begin
+    //       stateM_store_data_to_dmem[31:16] =  ((stateW.insn_opcode_W == OpcodeLoad) &&
+    //                                             (stateW.rd_no_W == stateM.rs2_no_M)) ?
+    //                                             rd_val_temp[15:0] :
+    //                                             stateM.rs2_data_temp_M[15:0];
+    //       stateM_store_we_to_dmem_M = 4'b1100;
+    //     end
+    //   end
+    //   else if(stateM.mem_control_M.insn_sw) begin
+    //     stateM_store_data_to_dmem =  ((stateW.insn_opcode_W == OpcodeLoad) &&
+    //                                   (stateW.rd_no_W == stateM.rs2_no_M)) ?
+    //                                   rd_val_temp :
+    //                                   stateM.rs2_data_temp_M;
+    //     stateM_store_we_to_dmem_M = 4'b1111;
+    // end
+
+
+
+    case (stateM.insn_opcode_M)
+      OpcodeStore: begin
+        addr_to_dmem_temp = (address_bits_mem & 32'hFFFF_FFFC);
+        store_data_temp_mem = (wm_mux == 2'b1 || wm_mux == 2'b11) ? stateW.rd_val_W : stateM.rs2_data_temp_M;
+        if(stateM.mem_control_M.insn_sb)begin
+          //store_data_to_dmem_temp = (wm_mux == 2'b10) ? {{4{stateW.rd_val_W[7:0]}}} : {{4{stateM.rs2_data_temp_M[7:0]}}};
+          if(address_bits_mem[1:0] == 2'b00) begin
+            store_data_to_dmem_temp = {{24{1'b0}},{store_data_temp_mem[7:0]}};
+            store_we_to_dmem_temp = 4'b0001;
+          end
+          else if(address_bits_mem[1:0] == 2'b01)begin
+            store_data_to_dmem_temp = {{16{1'b0}},{store_data_temp_mem[7:0]},{8{1'b0}}};
+            store_we_to_dmem_temp= 4'b0010;
+          end
+          else if(address_bits_mem[1:0] == 2'b10) begin 
+            store_data_to_dmem_temp = {{8{1'b0}},{store_data_temp_mem[7:0]},{16{1'b0}}};
+            store_we_to_dmem_temp= 4'b0100;
+          end
+          else begin
+            store_data_to_dmem_temp = {{store_data_temp_mem[7:0]},{24{1'b0}}};
+            store_we_to_dmem_temp= 4'b1000; 
+          end 
         end
-        else if(stateM.addr_to_dmem_M[1:0] == 2'b01) begin
-          stateM_store_data_to_dmem[15:8] =  ((stateW.insn_opcode_W == OpcodeLoad) &&
-                                              (stateW.rd_no_W == stateM.rs2_no_M)) ?
-                                              rd_val_temp[7:0] :
-                                              stateM.rs2_data_temp_M[7:0];
-          stateM_store_we_to_dmem_M = 4'b0010;
+        else if(stateM.mem_control_M.insn_sh)begin
+          //store_data_to_dmem_temp = (wm_mux == 2'b10) ? {{2{stateW.rd_val_W[15:0]}}} : {{2{stateM.rs2_data_temp_M[15:0]}}};
+          if(address_bits_mem[1:0] == 2'b00) begin
+            store_data_to_dmem_temp = {{16{1'b0}},{store_data_temp_mem[15:0]}};
+            store_we_to_dmem_temp= 4'b0011;
+          end
+          else begin
+            store_data_to_dmem_temp = {{store_data_temp_mem[15:0]},{16{1'b0}}};
+            store_we_to_dmem_temp= 4'b1100;
+          end 
         end
-        else if(stateM.addr_to_dmem_M[1:0] == 2'b10) begin
-          stateM_store_data_to_dmem[23:16] = ((stateW.insn_opcode_W == OpcodeLoad) &&
-                                              (stateW.rd_no_W == stateM.rs2_no_M)) ?
-                                              rd_val_temp[7:0] :
-                                              stateM.rs2_data_temp_M[7:0];
-          stateM_store_we_to_dmem_M = 4'b0100;
+        else if(stateM.mem_control_M.insn_sw)begin 
+          store_data_to_dmem_temp = (wm_mux == 2'b1 || wm_mux == 2'b11) ? stateW.rd_val_W : stateM.rs2_data_temp_M;
+          store_we_to_dmem_temp= 4'b1111;
         end
-        else if(stateM.addr_to_dmem_M[1:0] == 2'b11) begin
-          stateM_store_data_to_dmem[31:24] = ((stateW.insn_opcode_W == OpcodeLoad) &&
-                                              (stateW.rd_no_W == stateM.rs2_no_M)) ?
-                                              rd_val_temp[7:0] :
-                                              stateM.rs2_data_temp_M[7:0];
-          stateM_store_we_to_dmem_M = 4'b1000;
-        end
+        // else begin 
+        //   illegal_insn = 1'b1;
+        // end
       end
-      else if(stateM.mem_control_M.insn_sh) begin
-        if(stateM.addr_to_dmem_M[1:0] == 2'b00) begin
-          stateM_store_data_to_dmem[15:0] =  ((stateW.insn_opcode_W == OpcodeLoad) &&
-                                              (stateW.rd_no_W == stateM.rs2_no_M)) ?
-                                              rd_val_temp[15:0] :
-                                              stateM.rs2_data_temp_M[15:0];
-          stateM_store_we_to_dmem_M = 4'b0011;
+
+      OpcodeLoad: begin
+        address_bits_mem = stateM.address_bits_M;
+        addr_to_dmem_temp = (address_bits_mem & 32'hFFFF_FFFC);
+        if(stateM.mem_control_M.insn_lb) begin
+          if(address_bits_mem[1:0] == 2'b00) begin
+            rd_val_mem_temp = {{24{load_data_from_dmem[7]}},load_data_from_dmem[7:0]}; 
+          end 
+          else if(address_bits_mem[1:0] == 2'b01) begin 
+            rd_val_mem_temp = {{24{load_data_from_dmem[15]}},load_data_from_dmem[15:8]};
+          end 
+          else if(address_bits_mem[1:0] == 2'b10) begin 
+            rd_val_mem_temp = {{24{load_data_from_dmem[23]}},load_data_from_dmem[23:16]};
+          end 
+          else begin
+            rd_val_mem_temp = {{24{load_data_from_dmem[31]}},load_data_from_dmem[31:24]};  
+          end 
+        end  
+        else if(stateM.mem_control_M.insn_lh)begin 
+          if(address_bits_mem[1:0] == 2'b00) begin
+            rd_val_mem_temp = {{16{load_data_from_dmem[15]}},load_data_from_dmem[15:0]}; 
+          end 
+          else begin
+            rd_val_mem_temp = {{16{load_data_from_dmem[31]}},load_data_from_dmem[31:16]}; 
+          end 
         end
-        else if(stateM.addr_to_dmem_M[1:0] == 2'b10) begin
-          stateM_store_data_to_dmem[31:16] =  ((stateW.insn_opcode_W == OpcodeLoad) &&
-                                                (stateW.rd_no_W == stateM.rs2_no_M)) ?
-                                                rd_val_temp[15:0] :
-                                                stateM.rs2_data_temp_M[15:0];
-          stateM_store_we_to_dmem_M = 4'b1100;
-        end
+        else if(stateM.mem_control_M.insn_lw)begin 
+          rd_val_mem_temp = load_data_from_dmem[31:0]; 
+        end 
+        else if(stateM.mem_control_M.insn_lbu)begin 
+          if(address_bits_mem[1:0] == 2'b00) begin 
+            rd_val_mem_temp = {{24'b0},load_data_from_dmem[7:0]}; 
+          end 
+          else if(address_bits_mem[1:0] == 2'b01) begin
+            rd_val_mem_temp = {{24'b0},load_data_from_dmem[15:8]};
+          end 
+          else if(address_bits_mem[1:0] == 2'b10) begin
+            rd_val_mem_temp = {{24'b0},load_data_from_dmem[23:16]};
+          end 
+          else begin
+          rd_val_mem_temp = {{24'b0},load_data_from_dmem[31:24]};
+          end 
+        end 
+        else if(stateM.mem_control_M.insn_lhu)begin 
+          if(address_bits_mem[1:0] == 2'b00) begin
+            rd_val_mem_temp = {{16'b0},load_data_from_dmem[15:0]}; 
+          end 
+          else begin
+            rd_val_mem_temp = {{16'b0},load_data_from_dmem[31:16]}; 
+          end 
+        end  
+        // else begin
+        //   illegal_insn = 1'b1; 
+        // end
       end
-      else if(stateM.mem_control_M.insn_sw) begin
-        stateM_store_data_to_dmem =  ((stateW.insn_opcode_W == OpcodeLoad) &&
-                                      (stateW.rd_no_W == stateM.rs2_no_M)) ?
-                                      rd_val_temp :
-                                      stateM.rs2_data_temp_M;
-        stateM_store_we_to_dmem_M = 4'b1111;
+
+      default: begin
+        rd_val_mem_temp = stateM.rd_val_M;
+      end
+  endcase
     end
-  end
-  end
+  // end
   
 
   /****************/
@@ -1358,9 +1629,13 @@ module DatapathPipelined (
           insn_W: stateM.insn_M,
           cycle_status_W: stateM.cycle_status_M,
           rd_no_W: stateM.rd_no_M,
-          rd_val_W: ((selectDivider == 2'b1 || selectDivider == 2'b10) ?
-                      divMulticycle : (stateM.insn_opcode_M == OpcodeLoad) ?
-                      rd_val_temp : stateM.rd_val_M),
+          // rd_val_W: ((selectDivider == 2'b1 || selectDivider == 2'b10) ?
+          //             divMulticycle : (stateM.insn_opcode_M == OpcodeLoad) ?
+          //             rd_val_temp : stateM.rd_val_M),
+          rd_val_W: selectDivider == 2'b1 || selectDivider == 2'b10 ? 
+                  divMulticycle : rd_val_mem_temp,
+          // rd_val_W: selectDivider == 2'b1 || selectDivider == 2'b10 ? 
+          //         divMulticycle : rd_val_mem_temp,
           rs1_no_W: stateM.rs1_no_M,
           rs1_data_temp_W: stateM.rs1_data_temp_M,
           rs2_no_W: stateM.rs2_no_M,
@@ -1374,9 +1649,6 @@ module DatapathPipelined (
     end
   end
 
-
-
-
   wire [255:0] wb_disasm;
   Disasm #(
       .PREFIX("W")
@@ -1384,12 +1656,19 @@ module DatapathPipelined (
       .insn  (stateW.insn_W),
       .disasm(wb_disasm)
   );
-  assign store_data_to_dmem = stateW.store_data_to_dmem_W;
-  assign store_we_to_dmem = stateW.store_we_to_dmem_W;
+
+  // assign store_data_to_dmem = stateW.store_data_to_dmem_W;
+  // assign store_we_to_dmem = stateW.store_we_to_dmem_W;
+  // assign addr_to_dmem = addr_to_dmem_temp;
+  assign store_we_to_dmem = store_we_to_dmem_temp;
+  assign store_data_to_dmem = store_data_to_dmem_temp;
   assign we = (stateW.insn_opcode_W == OpcodeBranch ||
                   stateW.insn_opcode_W == OpcodeStore) ||
                   (stateW.rd_no_W == 0)? 1'b0 : 1'b1;//If not store or branch or rd_no is 0, we = 1
   assign halt = stateW.halt_sig_W;
+  assign addr_to_dmem = addr_to_dmem_temp;
+  // assign addr_to_dmem = addr_to_dmem_temp & 32'hFFFFFFFC;
+  // assign addr_to_dmem = stateM.addr_to_dmem_M & 32'hFFFFFFFC;
 
   assign trace_writeback_cycle_status = stateW.cycle_status_W;
   assign trace_writeback_pc = stateW.pc_W;
