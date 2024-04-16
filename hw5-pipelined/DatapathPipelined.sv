@@ -1103,8 +1103,15 @@ module DatapathPipelined (
       end
 
       OpcodeLoad: begin
-         if(((stateM.insn_opcode_M == OpcodeRegReg) || (stateM.insn_opcode_M == OpcodeRegImm)) && (stateM.rd_no_M == stateX.rs1_no_X))
-          addr_to_dmem_temp = stateM.rd_val_M + stateX.imm_i_sext_X;
+         if(((stateM.insn_opcode_M == OpcodeRegReg) || (stateM.insn_opcode_M == OpcodeRegImm) && (stateM.rd_no_M == stateX.rs1_no_X))||
+         ((stateW.insn_opcode_W == OpcodeRegReg) || (stateW.insn_opcode_W == OpcodeRegImm) && (stateW.rd_no_W == stateX.rs1_no_X)))
+          begin
+            if(stateM.rd_no_M == stateX.rs1_no_X)
+              addr_to_dmem_temp = stateM.rd_val_M+ stateX.imm_i_sext_X;
+            else if(stateW.rd_no_W == stateX.rs1_no_X)
+              addr_to_dmem_temp = stateW.rd_val_W + stateX.imm_i_sext_X;
+          end
+          
         else
           addr_to_dmem_temp = stateX.rs1_data_temp_X + stateX.imm_i_sext_X;
       end
