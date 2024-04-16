@@ -101,19 +101,11 @@ module cla
    input wire         cin,
    output wire [31:0] sum);
 
-   wire [31:0] g, p, carry;
+   wire [31:0] g, p;
+   wire [30:0] carry;
 
-   wire g31_0; 
-   wire p31_0; 
-
-   assign carry[0] = cin; 
-
-   wire [3:0] g_grp, p_grp;
-   wire [2:0] car_grp;
-
-   assign carry[24] = car_grp[2]; 
-   assign carry[16] = car_grp[1]; 
-   assign carry[8] = car_grp[0]; 
+   wire [4:0] g_grp, p_grp;
+   reg [31:0] sumBuf;
 
    genvar i;
 
@@ -121,19 +113,39 @@ module cla
       gp1 g_mod(.a(a[i]), .b(b[i]), .g(g[i]), .p(p[i]));
    end
 
-    gp8 gp8_1(.gin(g[7:0]), .pin(p[7:0]), .cin(carry[0]), .gout(g_grp[0]), .pout(p_grp[0]), .cout(carry[7:1]));
+   //  gp8 gp8_1(.gin(g[7:0]), .pin(p[7:0]), .cin(carry[0]), .gout(g_grp[0]), .pout(p_grp[0]), .cout(carry[6:0]));
 
-    gp8 gp8_2(.gin(g[15:8]), .pin(p[15:8]), .cin(car_grp[0]), .gout(g_grp[1]), .pout(p_grp[1]), .cout(carry[15:9]));
+   //  gp8 gp8_2(.gin(g[14:7]), .pin(p[15:8]), .cin(car_grp[0]), .gout(g_grp[1]), .pout(p_grp[1]), .cout(carry[13:7]));
 
-    gp8 gp8_3(.gin(g[23:16]), .pin(p[23:16]), .cin(car_grp[1]), .gout(g_grp[2]), .pout(p_grp[2]), .cout(carry[23:17]));
+   //  gp8 gp8_3(.gin(g[21:14]), .pin(p[23:16]), .cin(car_grp[1]), .gout(g_grp[2]), .pout(p_grp[2]), .cout(carry[20:14]));
 
-    gp8 gp8_4(.gin(g[31:24]), .pin(p[31:24]), .cin(car_grp[2]), .gout(g_grp[3]), .pout(p_grp[3]), .cout(carry[31:25]));
+   //  gp8 gp8_4(.gin(g[28:21]), .pin(p[31:24]), .cin(car_grp[2]), .gout(g_grp[3]), .pout(p_grp[3]), .cout(carry[27:21]));
 
-    gp4 gp4_final(.gin(g_grp[3:0]), .pin(p_grp[3:0]), .cin(carry[0]), .gout(g31_0), .pout(p31_0), .cout(car_grp[2:0]));
+   //  gp4 gp4_final(.gin(g[31:28]), .pin(p[31:28]), .cin(carry[27]), .gout(g_grp[4]), .pout(p_grp[4]), .cout(carry[30:28]));
 
+   gp8 gp8_1(.gin(g[7:0]), .pin(p[7:0]), .cin(cin), .gout(g_grp[0]), .pout(p_grp[0]), .cout(carry[6:0]));
 
-   for(i = 0; i < 32; i = i + 1) begin
-      assign sum[i] =  a[i] ^ b[i] ^ carry[i];
-   end 
+   gp8 gp8_2(.gin(g[14:7]), .pin(p[14:7]), .cin(carry[6]), .gout(g_grp[1]), .pout(p_grp[1]), .cout(carry[13:7]));
+
+   gp8 gp8_3(.gin(g[21:14]), .pin(p[21:14]), .cin(carry[13]), .gout(g_grp[2]), .pout(p_grp[2]), .cout(carry[20:14]));
+
+   gp8 gp8_4(.gin(g[28:21]), .pin(p[28:21]), .cin(carry[20]), .gout(g_grp[3]), .pout(p_grp[3]), .cout(carry[27:21]));
+
+   gp4 gp4_final(.gin(g[31:28]), .pin(p[31:28]), .cin(carry[27]), .gout(g_grp[4]), .pout(p_grp[4]), .cout(carry[30:28]));
+
+   always @(a or b) begin
+      integer j;
+      for(j = 0; j < 32; j = j + 1) begin
+         if(j != 0) begin
+            sumBuf[j] <= a[j] ^ b[j] ^ carry[j-1];
+            // sum[j] <= a[j] ^ b[j] ^ carry[j-1];
+         end
+         else begin
+            sumBuf[j] <= a[j] ^ b[j] ^ cin;
+            // sum[j] <= a[j] ^ b[j] ^ cin;
+         end
+      end
+   end   
+   assign sum = sumBuf;
 
 endmodule

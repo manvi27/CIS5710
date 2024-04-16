@@ -10,9 +10,9 @@
 `define OPCODE_SIZE 6:0
 
 `ifndef RISCV_FORMAL
-`include "../cla.sv"
+`include "../hw2b/cla.sv"
 `include "../hw3-singlecycle/RvDisassembler.sv"
-`include "../divider_unsigned_pipelined.sv"
+`include "../hw4-multicycle/divider_unsigned_pipelined.sv"
 `endif
 
 module Disasm #(
@@ -185,7 +185,7 @@ typedef struct packed {
 
 /** state at the start of Execute stage */
 typedef struct packed {
-  logic [`REG_SIZE] pc_X;
+    logic [`REG_SIZE] pc_X;
   logic [`INSN_SIZE] insn_X;
   cycle_status_e cycle_status_X;
   logic [4:0] rd_no_X;
@@ -226,7 +226,7 @@ typedef struct packed {
 
 /** state at the start of Write stage */
 typedef struct packed {
-  logic [`REG_SIZE] pc_W;
+    logic [`REG_SIZE] pc_W;
   logic [`INSN_SIZE] insn_W;
   cycle_status_e cycle_status_W;
   logic [4:0] rd_no_W;
@@ -461,8 +461,7 @@ module DatapathPipelined (
           stateD <= 0;
           stateD.cycle_status_D <= CYCLE_TAKEN_BRANCH;
         end else begin
-           begin 
-            begin    
+           begin     
             if(IsStallTrue == 1'b0)           
               stateD <= '{
               pc_D: pcCurr,
@@ -484,7 +483,6 @@ module DatapathPipelined (
               insn_opcode_D: insn_opcode,
               dec_control_D: '{default:0}
             };
-            end
           end
         end
       end
@@ -500,6 +498,8 @@ module DatapathPipelined (
 
   assign imm_i = stateD.insn_imem_D[31:20];
   wire [ 4:0] imm_shamt = stateD.insn_imem_D[24:20];
+    logic [1:0] selectDivider;
+  logic [`REG_SIZE] divMulticycle;
 
   assign imm_s[11:5] = stateD.insn7bit_D, imm_s[4:0] = stateD.insn_imem_D[11:7];
 
@@ -511,6 +511,7 @@ module DatapathPipelined (
 
   logic [1:0] mux_val_wd;
   logic [4:0] wd_rd_no;
+  logic divStall;
   assign wd_rd_no = stateW.rd_no_W;
 
   assign imm_i_sext = {{20{imm_i[11]}}, imm_i[11:0]};
@@ -572,10 +573,9 @@ module DatapathPipelined (
   assign insnSetX.insn_divu   = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[31:25] == 7'd1 && stateD.insn_imem_D[14:12] == 3'b101;
   assign insnSetX.insn_rem    = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[31:25] == 7'd1 && stateD.insn_imem_D[14:12] == 3'b110;
   assign insnSetX.insn_remu   = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[31:25] == 7'd1 && stateD.insn_imem_D[14:12] == 3'b111;
-
+ 
   assign insnSetX.insn_ecall = stateD.insn_opcode_D == OpcodeEnviron && stateD.insn_imem_D[31:7] == 25'd0;
   assign insnSetX.insn_fence = stateD.insn_opcode_D == OpcodeMiscMem;
-
   always_comb begin
     if (insnSetX.insn_jalr ||
         insnSetX.insn_addi ||
@@ -585,6 +585,7 @@ module DatapathPipelined (
         insnSetX.insn_ori ||
         insnSetX.insn_andi ||
         (stateD.insn_opcode_D == OpcodeLoad)) begin
+        
       imm_i_sext_X = imm_i_sext;
     end
     else if (insnSetX.insn_slli ||
@@ -593,12 +594,15 @@ module DatapathPipelined (
       imm_i_sext_X = imm_i_ext;
     end
     else if (stateD.insn_opcode_D == OpcodeStore) begin
+    
       imm_i_sext_X = imm_s_sext;
     end
     else if (stateD.insn_opcode_D == OpcodeBranch) begin
+    
       imm_i_sext_X = imm_b_sext;
     end
     else if (stateD.insn_opcode_D == OpcodeJal) begin
+    
       imm_i_sext_X = imm_j_sext;
     end
     else if ((stateD.insn_opcode_D == OpcodeLui) ||
@@ -611,13 +615,26 @@ module DatapathPipelined (
 
     mux_val_wd = 2'b0;
 
+    if (stateX.exe_control_X.insn_div ||
+        stateX.exe_control_X.insn_divu ||
+        stateX.exe_control_X.insn_rem ||
+        stateX.exe_control_X.insn_remu) begin
+      if (stateX.rd_no_X == stateD.rs1_no_D ||
+          stateX.rd_no_X == stateD.rs2_no_D) begin
+          divStall = 1'b1;
+          // execute_state_temp = 0;
+      end
+    end
+
     if (wd_rd_no != 0) begin
       case (wd_rd_no)
         stateD.rs1_no_D: begin
+        
             mux_val_wd = 2'b01;
             rs1_mux_data = stateW.rd_val_W;
         end
         stateD.rs2_no_D: begin
+        
             mux_val_wd = 2'b10;
             rs2_mux_data = stateW.rd_val_W;
         end
@@ -739,6 +756,7 @@ module DatapathPipelined (
             mux_val_mx_wx = 7;
             x_rs1_data = stateM.rd_val_M;
             x_rs2_data = stateW.rd_val_W;
+
           end
           if (m_rd_no == x_rs2_no && w_rd_no == x_rs1_no && x_rs1_no != x_rs2_no) begin
             mux_val_mx_wx = 8;
@@ -788,6 +806,7 @@ module DatapathPipelined (
           rd_temp = 32'b0;
         else begin
           rd_temp = {stateX.insn_imem_X[31:12], 12'd0};
+          rd_temp = {stateX.insn_imem_X[31:12], 12'd0};
         end
       end
 
@@ -830,15 +849,17 @@ module DatapathPipelined (
         if(stateX.exe_control_X.insn_beq) begin 
           if(x_rs1_data == x_rs2_data) begin 
             pcNext = stateX.pc_X + stateX.imm_i_sext_X;
+            
             branch_taken = 1'b1;
           end
           else begin 
             branch_taken = 1'b0;
           end 
-        end else
-        if(stateX.exe_control_X.insn_bne)begin
+        end else if(stateX.exe_control_X.insn_bne)begin
+        
           if (x_rs1_data != x_rs2_data) begin
             pcNext = stateX.pc_X + stateX.imm_i_sext_X;
+            
             branch_taken = 1'b1;
             end
           else begin 
@@ -846,8 +867,10 @@ module DatapathPipelined (
           end 
         end  
         else if(stateX.exe_control_X.insn_blt)begin 
+        
           if($signed(x_rs1_data) < $signed(x_rs2_data)) begin
             pcNext = stateX.pc_X + stateX.imm_i_sext_X;
+            
             branch_taken = 1'b1;
           end 
           else begin 
@@ -855,8 +878,10 @@ module DatapathPipelined (
           end
         end
         else if(stateX.exe_control_X.insn_bge)begin 
+         
           if($signed(x_rs1_data) >= $signed(x_rs2_data)) begin
             pcNext = stateX.pc_X + stateX.imm_i_sext_X;
+   
             branch_taken = 1'b1;
           end
           else begin 
@@ -864,6 +889,7 @@ module DatapathPipelined (
           end 
         end 
         else if(stateX.exe_control_X.insn_bltu)begin 
+        
           if($signed(x_rs1_data) < $unsigned(x_rs2_data)) begin
             pcNext = stateX.pc_X + stateX.imm_i_sext_X;
             branch_taken = 1'b1;
@@ -872,6 +898,7 @@ module DatapathPipelined (
             branch_taken = 1'b0;
           end
         end
+            
         else if(stateX.exe_control_X.insn_bgeu)begin 
           if($signed(x_rs1_data) >= $unsigned(x_rs2_data)) begin
             pcNext = stateX.pc_X + stateX.imm_i_sext_X;
@@ -894,34 +921,42 @@ module DatapathPipelined (
           rd_temp = add_sum;
         end
         else if (stateX.exe_control_X.insn_slti) begin 
+         
           //     we = 1'b1; 
           rd_temp = ($signed(stateX.imm_i_sext_X) > $signed(x_rs1_data)) ? 32'b1 : 32'b0;
         end
         else if(stateX.exe_control_X.insn_sltiu) begin
+        
           //     we = 1'b1;
           rd_temp = ($signed(x_rs1_data) < $unsigned(stateX.imm_i_sext_X)) ? 32'b1 : 32'b0;
         end  
         else if(stateX.exe_control_X.insn_xori) begin 
+        
           //     we = 1'b1;
           rd_temp = $signed(x_rs1_data) ^ stateX.imm_i_sext_X;
         end 
         else if(stateX.exe_control_X.insn_ori) begin
+        
           //     we = 1'b1;
           rd_temp = $signed(x_rs1_data) | stateX.imm_i_sext_X;
         end
         else if(stateX.exe_control_X.insn_andi) begin
+        
           //     we = 1'b1;
           rd_temp = $signed(x_rs1_data) & stateX.imm_i_sext_X;
         end
         else if(stateX.exe_control_X.insn_slli) begin
+        
           //     we = 1'b1;
           rd_temp = (x_rs1_data << (stateX.imm_i_sext_X[4:0]));
         end
         else if(stateX.exe_control_X.insn_srli) begin
+        
           //     we = 1'b1;
           rd_temp = (x_rs1_data >> (stateX.imm_i_sext_X[4:0]));
         end
         else if(stateX.exe_control_X.insn_srai) begin
+        
           //     we = 1'b1;
           rd_temp = ($signed(x_rs1_data) >>> (stateX.imm_i_sext_X[4:0]));
         end
@@ -940,6 +975,7 @@ module DatapathPipelined (
           rd_temp = add_sum;
         end
         else if(stateX.exe_control_X.insn_sub) begin 
+        
           add_cin = 1'b1;
           // we = 1'b1;
           add_a = x_rs1_data;
@@ -947,46 +983,57 @@ module DatapathPipelined (
           rd_temp = add_sum;
         end
         else if(stateX.exe_control_X.insn_sll) begin 
+        
           // we = 1'b1;
           rd_temp = x_rs1_data << x_rs2_data[4:0];
         end
         else if(stateX.exe_control_X.insn_slt) begin  
+         
           //   we = 1'b1;
           rd_temp = $signed(x_rs1_data) < $signed(x_rs2_data) ? 32'b1 : 32'b0;
         end
         else if(stateX.exe_control_X.insn_sltu) begin 
+        
           //   we = 1'b1;
           rd_temp = (x_rs1_data < $unsigned(x_rs2_data))? 32'b1:32'b0;
         end
         else if(stateX.exe_control_X.insn_xor) begin 
+         
           //   we = 1'b1;
           rd_temp = x_rs1_data ^ x_rs2_data;
         end
         else if(stateX.exe_control_X.insn_srl) begin 
+        
           //   we = 1'b1;
           rd_temp = x_rs1_data >> (x_rs2_data[4:0]);
         end
         else if(stateX.exe_control_X.insn_sra) begin 
+         
           //   we = 1'b1;
           rd_temp = $signed(x_rs1_data) >>> (x_rs2_data[4:0]);
         end
         else if(stateX.exe_control_X.insn_or) begin 
+        
           //   we = 1'b1;
           rd_temp = x_rs1_data | x_rs2_data;
         end
         else if(stateX.exe_control_X.insn_and) begin 
+         
           //   we = 1'b1;
           rd_temp = x_rs1_data & x_rs2_data;
         end
         else if(stateX.exe_control_X.insn_mul) begin 
+        
           product = x_rs1_data * x_rs2_data;
           rd_temp = product[31:0];
         end 
         else if(stateX.exe_control_X.insn_mulh) begin 
+        
           product = ($signed(x_rs1_data) * $signed(x_rs2_data));
           rd_temp = product[63:32];
         end  
         else if(stateX.exe_control_X.insn_mulhsu) begin
+        
           if (x_rs1_data[31] == 1'b1) begin
             product_signed = ~(x_rs1_data) + 32'b1;
           end else begin
@@ -1003,10 +1050,12 @@ module DatapathPipelined (
           rd_temp = product_final[63:32];             
         end
         else if(stateX.exe_control_X.insn_mulhu) begin 
+        
           product = ($unsigned(x_rs1_data) *  $unsigned(x_rs2_data));
           rd_temp = product[63:32];
         end
         else if(stateX.exe_control_X.insn_div) begin 
+        
           
           // dividend = x_rs1_data[31] ? (~x_rs1_data + 1) : x_rs1_data;
           // divisor = x_rs2_data[31] ? (~x_rs2_data + 1) : x_rs2_data;
@@ -1014,12 +1063,12 @@ module DatapathPipelined (
           //                                                 ((div_rs1 != div_rs2) ?
           //                                                 (~quotient + 1) : quotient);
 
-          rs1d = x_rs1_data[31];
-          rs2d = x_rs2_data[31];
-          zero_check = (x_rs1_data == 0) | (x_rs2_data == 0);
+          // rs1d = x_rs1_data[31];
+          // rs2d = x_rs2_data[31];
+          // zero_check = (x_rs1_data == 0) | (x_rs2_data == 0);
           dividend = x_rs1_data[31] ? (~x_rs1_data + 1) : x_rs1_data;
           divisor = x_rs2_data[31] ? (~x_rs2_data + 1) : x_rs2_data;
-          rd_data = (x_rs1_data == 0) | (x_rs2_data == 0) ? $signed(32'hFFFFFFFF) : ((rs1d != rs2d) ? (~quotient + 1) : quotient);
+          rd_temp = ((x_rs1_data == 0) | (x_rs2_data == 0)) ? $signed(32'hFFFFFFFF) : ((x_rs1_data[31] != x_rs2_data[31]) ? (~quotient + 1) : quotient);
 
         end
         else if(stateX.exe_control_X.insn_divu) begin 
@@ -1100,6 +1149,7 @@ module DatapathPipelined (
         branch_taken_M: 0,
         pcNext_M: 0,
         mem_control_M: '{default:0}
+
       };
     end else begin
       begin
@@ -1141,6 +1191,41 @@ module DatapathPipelined (
 
   always_latch begin
   
+    divMulticycle = 0;
+
+    selectDivider = 0;
+    if (stateM.mem_control_M.insn_div == 1'b1) begin
+        //divMulticycle = o_quotient_temp;
+        selectDivider = 2'b1;
+        if (stateM.rs1_data_temp_M == 0 | stateM.rs2_data_temp_M == 0) begin  
+          divMulticycle = $signed(32'hFFFF_FFFF);             
+        end 
+        else if(stateM.rs1_data_temp_M[31] != stateM.rs2_data_temp_M[31]) begin
+          divMulticycle = (~quotient + 32'b1);
+        end 
+        else begin 
+          divMulticycle = quotient;
+        end 
+    end else if (stateM.mem_control_M.insn_divu == 1'b1) begin
+        divMulticycle = quotient;
+        selectDivider = 2'b1;
+    end else if (stateM.mem_control_M.insn_rem == 1'b1) begin
+        selectDivider = 2'b10;
+        if(stateM.rs1_data_temp_M == 32'b0) begin  
+          divMulticycle = (stateM.rs2_data_temp_M[31]) ? 
+            (~stateM.rs2_data_temp_M + 32'b1) : stateM.rs2_data_temp_M;             
+        end 
+        else if((stateM.rs1_data_temp_M[31])) begin
+          divMulticycle = (~remainder + 32'b1);
+        end 
+        else begin 
+          divMulticycle = remainder;
+        end
+    end else if (stateM.mem_control_M.insn_remu == 1'b1 ) begin
+        divMulticycle = remainder;
+        selectDivider = 2'b10;
+    end
+    
     if(stateM.insn_opcode_M == OpcodeLoad) begin
       if(stateM.mem_control_M.insn_lb) begin
         if(stateM.addr_to_dmem_M[1:0] == 2'b00)
@@ -1164,7 +1249,7 @@ module DatapathPipelined (
       end
       else if(stateM.mem_control_M.insn_lh) begin
         if(stateM.addr_to_dmem_M[1:0] == 2'b00)
-          rd_val_temp = 32'(signed'(load_data_from_dmem[15:0]));
+        rd_val_temp = 32'(signed'(load_data_from_dmem[15:0]));
         else if(stateM.addr_to_dmem_M[1:0] == 2'b10)
           rd_val_temp = 32'(signed'(load_data_from_dmem[31:16]));
       end
@@ -1209,7 +1294,6 @@ module DatapathPipelined (
                                               stateM.rs2_data_temp_M[7:0];
           stateM_store_we_to_dmem_M = 4'b1000;
         end
-
       end
       else if(stateM.mem_control_M.insn_sh) begin
         if(stateM.addr_to_dmem_M[1:0] == 2'b00) begin
@@ -1233,8 +1317,8 @@ module DatapathPipelined (
                                       rd_val_temp :
                                       stateM.rs2_data_temp_M;
         stateM_store_we_to_dmem_M = 4'b1111;
-      end
     end
+  end
   end
   
 
@@ -1258,6 +1342,7 @@ module DatapathPipelined (
         halt_sig_W: 0,
         store_data_to_dmem_W:'{default:0},
         store_we_to_dmem_W:'{default:0}
+        
       };
     end else begin
       begin
@@ -1266,7 +1351,9 @@ module DatapathPipelined (
           insn_W: stateM.insn_M,
           cycle_status_W: stateM.cycle_status_M,
           rd_no_W: stateM.rd_no_M,
-          rd_val_W: (stateM.insn_opcode_M == OpcodeLoad)?rd_val_temp:stateM.rd_val_M,
+          rd_val_W: ((selectDivider == 2'b1 || selectDivider == 2'b10) ?
+                      divMulticycle : (stateM.insn_opcode_M == OpcodeLoad) ?
+                      rd_val_temp : stateM.rd_val_M),
           rs1_no_W: stateM.rs1_no_M,
           rs1_data_temp_W: stateM.rs1_data_temp_M,
           rs2_no_W: stateM.rs2_no_M,
@@ -1290,14 +1377,11 @@ module DatapathPipelined (
       .insn  (stateW.insn_W),
       .disasm(wb_disasm)
   );
-  assign we = (stateW.insn_opcode_W == OpcodeBranch ||
-                  stateW.insn_opcode_W == OpcodeStore) ||
-                  (stateW.rd_no_W == 0)? 1'b0 :(1'b1);
-
-  
   assign store_data_to_dmem = stateW.store_data_to_dmem_W;
   assign store_we_to_dmem = stateW.store_we_to_dmem_W;
-  
+  assign we = (stateW.insn_opcode_W == OpcodeBranch ||
+                  stateW.insn_opcode_W == OpcodeStore) ||
+                  (stateW.rd_no_W == 0)? 1'b0 : 1'b1;//If not store or branch or rd_no is 0, we = 1
   assign halt = stateW.halt_sig_W;
 
   assign trace_writeback_cycle_status = stateW.cycle_status_W;
