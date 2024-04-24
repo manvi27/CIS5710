@@ -1350,6 +1350,7 @@ module DatapathPipelined (
     divMulticycle = 0;
     address_bits_mem = stateM.address_bits_M;
     selectDivider = 0;
+    wm_mux = 2'b0;
 
     store_we_to_dmem_temp = 0;
     
