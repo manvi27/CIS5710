@@ -114,7 +114,6 @@ module MemoryAxiLite #(
   logic [DATA_WIDTH-1:0] mem_array[NUM_WORDS];
   localparam int AddrMsb = $clog2(NUM_WORDS) + 1;
   localparam int AddrLsb = 2;
-
   // [BR]RESP codes, from Section A 3.4.4 of AXI4 spec
   localparam bit [1:0] ResponseOkay = 2'b00;
   // localparam bit [1:0] ResponseSubordinateError = 2'b10;
@@ -130,11 +129,15 @@ module MemoryAxiLite #(
     assert (insn.ARPROT == 3'd0);
     assert (data.ARPROT == 3'd0);
     assert (data.AWPROT == 3'd0);
+    assert (AddrMsb <= ADDR_WIDTH);
   end
 `endif
 
   // TODO: changes will be needed throughout this module
-
+//  modport subord(
+//       input ARVALID, ARADDR, ARPROT, RREADY, AWVALID, AWADDR, AWPROT, WVALID, WDATA, WSTRB, BREADY,
+//       output ARREADY, RVALID, RDATA, RRESP, AWREADY, WREADY, BVALID, BRESP
+//   );
   always_ff @(posedge axi.ACLK) begin
     if (!axi.ARESETn) begin
       // start out ready to accept incoming reads
@@ -143,8 +146,28 @@ module MemoryAxiLite #(
       // start out ready to accept an incoming write
       data.AWREADY <= 1;
       data.WREADY <= 1;
-    end else begin
 
+    end else begin
+      insn.BVALID <= 1;
+      data.BVALID <= 1;
+      insn.RVALID <= 1;
+      data.RVALID <= 1;
+      if(data.ARVALID) begin
+        data.RDATA <= mem_array[data.ARADDR[AddrMsb:AddrLsb]][DATA_WIDTH-1:0];
+        data.RRESP <= ResponseOkay;
+      end
+      if(data.AWVALID && data.WVALID) begin
+        mem_array[data.AWADDR[AddrMsb:AddrLsb]][DATA_WIDTH-1:0] <= data.WDATA;
+        data.BRESP <= ResponseOkay;
+      end
+      if(insn.ARVALID) begin
+        insn.RDATA <= mem_array[insn.ARADDR[AddrMsb:AddrLsb]][DATA_WIDTH-1:0];
+        data.RRESP <= ResponseOkay;
+      end
+      if(insn.AWVALID && insn.WVALID) begin
+        mem_array[data.AWADDR[AddrMsb:AddrLsb]][DATA_WIDTH-1:0] <= insn.WDATA;
+        insn.BRESP <= ResponseOkay;
+      end
     end
   end
 
