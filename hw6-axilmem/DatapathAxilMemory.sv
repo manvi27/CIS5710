@@ -168,7 +168,22 @@ module MemoryAxiLite #(
       end
       if(data.AWVALID && data.WVALID) begin
         data.BVALID <= 1;
-        mem_array[data.AWADDR[AddrMsb:AddrLsb]][DATA_WIDTH-1:0] <= data.WDATA;
+        // for(int i = 0; i < DATA_WIDTH/8; i = i+1) begin
+          if(data.WSTRB[0] == 1'b1) begin
+            mem_array[data.AWADDR[AddrMsb:AddrLsb]][7:0] <= data.WDATA[7:0];
+          end
+          if(data.WSTRB[1] == 1'b1) begin
+            mem_array[data.AWADDR[AddrMsb:AddrLsb]][15:8] <= data.WDATA[15:8];
+          end
+          if(data.WSTRB[2] == 1'b1) begin
+            mem_array[data.AWADDR[AddrMsb:AddrLsb]][23:16] <= data.WDATA[23:16];
+          end
+          if(data.WSTRB[3] == 1'b1) begin
+            mem_array[data.AWADDR[AddrMsb:AddrLsb]][31:24] <= data.WDATA[31:24];
+          end
+        // end
+        
+        // mem_array[data.AWADDR[AddrMsb:AddrLsb]][DATA_WIDTH-1:0] <= data.WDATA;
         data.BRESP <= ResponseOkay;
       end
       if(insn.ARVALID) begin
@@ -465,12 +480,12 @@ module DatapathAxilMemory (
     axi_if.manager imem,
 
     // Once imem is working, replace this interface to dmem...
-    output logic [`REG_SIZE] addr_to_dmem,
-    input wire [`REG_SIZE] load_data_from_dmem,
-    output logic [`REG_SIZE] store_data_to_dmem,
-    output logic [3:0] store_we_to_dmem,
+    // output logic [`REG_SIZE] addr_to_dmem,
+    // input wire [`REG_SIZE] load_data_from_dmem,
+    // output logic [`REG_SIZE] store_data_to_dmem,
+    // output logic [3:0] store_we_to_dmem,
     // ...with this AXIL one
-    // axi_if.manager dmem,
+    axi_if.manager dmem,
 
     output logic halt,
 
@@ -1668,49 +1683,50 @@ module DatapathAxilMemory (
         addr_to_dmem_temp = (address_bits_mem & 32'hFFFF_FFFC);
         if(stateM.mem_control_M.insn_lb) begin
           if(address_bits_mem[1:0] == 2'b00) begin
-            rd_val_mem_temp = {{24{load_data_from_dmem[7]}},load_data_from_dmem[7:0]}; 
+            // rd_val_mem_temp = {{24{load_data_from_dmem[7]}},load_data_from_dmem[7:0]}; 
+            rd_val_mem_temp = {{24{dmem.RDATA[7]}},dmem.RDATA[7:0]}; 
           end 
           else if(address_bits_mem[1:0] == 2'b01) begin 
-            rd_val_mem_temp = {{24{load_data_from_dmem[15]}},load_data_from_dmem[15:8]};
+            rd_val_mem_temp = {{24{dmem.RDATA[15]}},dmem.RDATA[15:8]};
           end 
           else if(address_bits_mem[1:0] == 2'b10) begin 
-            rd_val_mem_temp = {{24{load_data_from_dmem[23]}},load_data_from_dmem[23:16]};
+            rd_val_mem_temp = {{24{dmem.RDATA[23]}},dmem.RDATA[23:16]};
           end 
           else begin
-            rd_val_mem_temp = {{24{load_data_from_dmem[31]}},load_data_from_dmem[31:24]};  
+            rd_val_mem_temp = {{24{dmem.RDATA[31]}},dmem.RDATA[31:24]};  
           end 
         end  
         else if(stateM.mem_control_M.insn_lh)begin 
           if(address_bits_mem[1:0] == 2'b00) begin
-            rd_val_mem_temp = {{16{load_data_from_dmem[15]}},load_data_from_dmem[15:0]}; 
+            rd_val_mem_temp = {{16{dmem.RDATA[15]}},dmem.RDATA[15:0]}; 
           end 
           else begin
-            rd_val_mem_temp = {{16{load_data_from_dmem[31]}},load_data_from_dmem[31:16]}; 
+            rd_val_mem_temp = {{16{dmem.RDATA[31]}},dmem.RDATA[31:16]}; 
           end 
         end
         else if(stateM.mem_control_M.insn_lw)begin 
-          rd_val_mem_temp = load_data_from_dmem[31:0]; 
+          rd_val_mem_temp = dmem.RDATA[31:0]; 
         end 
         else if(stateM.mem_control_M.insn_lbu)begin 
           if(address_bits_mem[1:0] == 2'b00) begin 
-            rd_val_mem_temp = {{24'b0},load_data_from_dmem[7:0]}; 
+            rd_val_mem_temp = {{24'b0},dmem.RDATA[7:0]}; 
           end 
           else if(address_bits_mem[1:0] == 2'b01) begin
-            rd_val_mem_temp = {{24'b0},load_data_from_dmem[15:8]};
+            rd_val_mem_temp = {{24'b0},dmem.RDATA[15:8]};
           end 
           else if(address_bits_mem[1:0] == 2'b10) begin
-            rd_val_mem_temp = {{24'b0},load_data_from_dmem[23:16]};
+            rd_val_mem_temp = {{24'b0},dmem.RDATA[23:16]};
           end 
           else begin
-          rd_val_mem_temp = {{24'b0},load_data_from_dmem[31:24]};
+          rd_val_mem_temp = {{24'b0},dmem.RDATA[31:24]};
           end 
         end 
         else if(stateM.mem_control_M.insn_lhu)begin 
           if(address_bits_mem[1:0] == 2'b00) begin
-            rd_val_mem_temp = {{16'b0},load_data_from_dmem[15:0]}; 
+            rd_val_mem_temp = {{16'b0},dmem.RDATA[15:0]}; 
           end 
           else begin
-            rd_val_mem_temp = {{16'b0},load_data_from_dmem[31:16]}; 
+            rd_val_mem_temp = {{16'b0},dmem.RDATA[31:16]}; 
           end 
         end  
         // else begin
@@ -1773,6 +1789,8 @@ module DatapathAxilMemory (
         };
       end
     end
+    dmem.AWVALID <= dmem.AWVALID^1'b1;
+    dmem.WVALID <= dmem.WVALID^1'b1;
   end
 
   wire [255:0] wb_disasm;
@@ -1786,13 +1804,13 @@ module DatapathAxilMemory (
   // assign store_data_to_dmem = stateW.store_data_to_dmem_W;
   // assign store_we_to_dmem = stateW.store_we_to_dmem_W;
   // assign addr_to_dmem = addr_to_dmem_temp;
-  assign store_we_to_dmem = store_we_to_dmem_temp;
-  assign store_data_to_dmem = store_data_to_dmem_temp;
+  assign dmem.WSTRB = store_we_to_dmem_temp;
+  assign dmem.WDATA = store_data_to_dmem_temp;
   assign we = (stateW.insn_opcode_W == OpcodeBranch ||
                   stateW.insn_opcode_W == OpcodeStore) ||
                   (stateW.rd_no_W == 0)? 1'b0 : 1'b1;//If not store or branch or rd_no is 0, we = 1
   assign halt = stateW.halt_sig_W;
-  assign addr_to_dmem = addr_to_dmem_temp;
+  assign dmem.AWADDR = addr_to_dmem_temp;
   // assign addr_to_dmem = addr_to_dmem_temp & 32'hFFFFFFFC;
   // assign addr_to_dmem = stateM.addr_to_dmem_M & 32'hFFFFFFFC;
 
@@ -1913,29 +1931,29 @@ module RiscvProcessor (
     .data(axi_data.subord)
   );
 
-  // DatapathAxilMemory datapath (
-  //     .clk(clk),
-  //     .rst(rst),
-  //     .imem(axi_insn.manager),
-  //     .dmem(axi_data.manager),
-  //     .halt(halt),
-  //     .trace_writeback_pc(trace_writeback_pc),
-  //     .trace_writeback_insn(trace_writeback_insn),
-  //     .trace_writeback_cycle_status(trace_writeback_cycle_status)
-  // );
   DatapathAxilMemory datapath (
       .clk(clk),
       .rst(rst),
       .imem(axi_insn.manager),
-      .addr_to_dmem(mem_data_addr),
-      .store_data_to_dmem(mem_data_to_write),
-      .store_we_to_dmem(mem_data_we),
-      .load_data_from_dmem(mem_data_loaded_value),
+      .dmem(axi_data.manager),
       .halt(halt),
       .trace_writeback_pc(trace_writeback_pc),
       .trace_writeback_insn(trace_writeback_insn),
       .trace_writeback_cycle_status(trace_writeback_cycle_status)
   );
+  // DatapathAxilMemory datapath (
+  //     .clk(clk),
+  //     .rst(rst),
+  //     .imem(axi_insn.manager),
+  //     .addr_to_dmem(mem_data_addr),
+  //     .store_data_to_dmem(mem_data_to_write),
+  //     .store_we_to_dmem(mem_data_we),
+  //     .load_data_from_dmem(mem_data_loaded_value),
+  //     .halt(halt),
+  //     .trace_writeback_pc(trace_writeback_pc),
+  //     .trace_writeback_insn(trace_writeback_insn),
+  //     .trace_writeback_cycle_status(trace_writeback_cycle_status)
+  // );
 
   
 
