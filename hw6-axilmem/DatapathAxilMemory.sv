@@ -513,76 +513,6 @@ module DatapathAxilMemory (
   localparam bit [`OPCODE_SIZE] OpcodeAuipc = 7'b00_101_11;//0x17
   localparam bit [`OPCODE_SIZE] OpcodeLui = 7'b01_101_11;//0x37
 
-  // cycle counter, not really part of any stage but useful for orienting within GtkWave
-  // do not rename this as the testbench uses this value
-  logic [`REG_SIZE] cycles_current;
-  always_ff @(posedge clk) begin
-    if (rst) begin
-      cycles_current <= 0;
-    end else begin
-      cycles_current <= cycles_current + 1;
-    end
-  end
-
-  /***************/
-  /* FETCH STAGE */
-  /***************/
-
-  logic [`REG_SIZE] pcCurr;
-  logic [`REG_SIZE] pcNext;
-  wire [`REG_SIZE] instr;
-  cycle_status_e cycleStatus;
-  logic [`REG_SIZE] fetch_pc_pass;
-  logic [`REG_SIZE] fetch_insn_pass;
-  cycle_status_e f_cycle_status, fetch_cycle_status_pass;
-
-  // program counter
-  always_ff @(posedge clk) begin
-    if (rst) begin
-      pcCurr <= 32'd0;
-      cycleStatus <= CYCLE_NO_STALL;
-    end else begin
-      cycleStatus <= CYCLE_NO_STALL;
-      if (branch_taken) begin
-        pcCurr <= pcNext; 
-      end 
-      else if(fenceStall || divStall || loadStall)  begin
-        // pcCurr <= pcCurr + 4; 
-      end
-      else begin
-        pcCurr <= pcCurr + 4;
-      end
-    end
-  end
-
-
-  // send PC to imem
-  assign imem.ARADDR = pcCurr;
-  assign imem.ARVALID = 1'b1;
-  assign instr = imem.RDATA;
-
-  always_comb begin
-    if(branch_taken == 1'b1) begin
-      fetch_cycle_status_pass = CYCLE_TAKEN_BRANCH;
-      fetch_insn_pass = 32'b0;
-      fetch_pc_pass = 32'b0;
-    end else begin
-      fetch_cycle_status_pass = cycleStatus;
-      fetch_insn_pass = instr;
-      fetch_pc_pass = pcCurr;
-    end
-  end
-  
-  // Here's how to disassemble an insn into a string you can view in GtkWave.
-  // Use PREFIX to provide a 1-character tag to identify which stage the insn comes from.
-  wire [255:0] f_disasm;
-  Disasm #(
-      .PREFIX("F")
-  ) disasm_0fetch (
-      .insn  (instr),
-      .disasm(f_disasm)
-  );
-
   wire [6:0] insn7bit;
   wire [4:0] insn_rs2;
   wire [4:0] insn_rs1;
@@ -626,10 +556,6 @@ module DatapathAxilMemory (
   logic [63:0] product;
   logic [31:0] product_signed;
   logic [63:0] product_final;
-  logic [31:0] dividend;
-  logic [31:0] divisor;
-  logic [31:0] remainder;
-  logic [31:0] quotient;
   logic branch_taken;
   logic [`REG_SIZE] rd_temp;
   logic [`OPCODE_SIZE] insn_opcode_x;
@@ -643,24 +569,25 @@ module DatapathAxilMemory (
   logic zero_check, div_rs1, div_rs2;
   logic rs1d, rs2d;
 
-  // logic IsStallTrue = 1'b0;
-  // assign IsStallTrue = ((stateD.insn_opcode_D == OpcodeMiscMem)&&((stateX.insn_opcode_X == OpcodeStore)||(stateM.insn_opcode_M == OpcodeStore)));
-  assign {insn7bit,
-          insn_rs2,
-          insn_rs1,
-          insn3bit,
-          insn_rd,
-          insn_opcode} = fetch_insn_pass;// = insn_from_imem;
+  /*stalling flags and bypass muxes*/
+  logic [1:0] mux_val_wd;
+  logic [4:0] wd_rd_no;
+  logic divStall;
+  logic fenceStall;
+  logic loadStall;
+  
+  // cycle counter, not really part of any stage but useful for orienting within GtkWave
+  // do not rename this as the testbench uses this value
+  logic [`REG_SIZE] cycles_current;
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      cycles_current <= 0;
+    end else begin
+      cycles_current <= cycles_current + 1;
+    end
+  end
 
-  assign {imm_b_temp[12],
-          imm_b_temp[10:5]} = insn7bit,
-        {imm_b_temp[4:1],
-        imm_b_temp[11]} = insn_rd,
-        imm_b_temp[0] = 1'b0;
-
-  assign imm_b_sext_temp = {{19{imm_b_temp[12]}}, imm_b_temp[12:0]};
-
-
+  /*alu instance*/
   RegFile rf(.rd(stateW.rd_no_W),
             .rd_data(stateW.rd_val_W),
             .rs1(stateD.rs1_no_D),
@@ -671,11 +598,19 @@ module DatapathAxilMemory (
             .we(we),
             .rst(rst));
 
+  /*alu instance*/
   cla alu (.a(add_a),
           .b(add_b),
           .cin(add_cin),
           .sum(add_sum));
 
+  /*divider instance*/
+  logic [1:0] selectDivider;
+  logic [`REG_SIZE] divMulticycle;
+  logic [31:0] dividend;
+  logic [31:0] divisor;
+  logic [31:0] remainder;
+  logic [31:0] quotient;
   divider_unsigned_pipelined div(.clk(clk),
                                 .rst(rst),
                                 .i_dividend(dividend),
@@ -683,14 +618,164 @@ module DatapathAxilMemory (
                                 .o_quotient(quotient),
                                 .o_remainder(remainder));
 
+  /***************/
+  /* FETCH STAGE */
+  /***************/
+
+  logic [`REG_SIZE] pcCurr;
+  logic [`REG_SIZE] pcNext;
+  wire [`REG_SIZE] instr;
+  cycle_status_e cycleStatus;
+  // logic [`REG_SIZE] fetch_pc_pass;
+  // logic [`REG_SIZE] fetch_insn_pass;
+  cycle_status_e f_cycle_status, fetch_cycle_status_pass;
+  logic stall_flag;
+  assign stall_flag = (fenceStall || divStall || loadStall);
+  // send PC to imem
+  assign imem.ARADDR = pcCurr;
+  assign imem.ARVALID = 1'b1;
+  assign instr = imem.RDATA;
+
+  // program counter
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      pcCurr <= 32'd0;
+      cycleStatus <= CYCLE_NO_STALL;
+    end else begin
+      cycleStatus <= CYCLE_NO_STALL;
+      if (branch_taken) begin
+        pcCurr <= pcNext; 
+      end 
+      // else if(fenceStall || divStall || loadStall)  begin
+        // pcCurr <= pcCurr + 4; 
+      // end
+      else if(stall_flag) begin
+      end
+      else begin
+        pcCurr <= pcCurr + 4;
+      end
+    end
+  end
+
+  // always_comb begin
+  //   if(branch_taken == 1'b1) begin
+  //     fetch_cycle_status_pass = CYCLE_TAKEN_BRANCH;
+  //     fetch_insn_pass = 32'b0;
+  //     fetch_pc_pass = 32'b0;
+  //   end else begin
+  //     fetch_cycle_status_pass = cycleStatus;
+  //     fetch_insn_pass = instr;
+  //     fetch_pc_pass = pcCurr;
+  //   end
+  // end
+  
+  // Here's how to disassemble an insn into a string you can view in GtkWave.
+  // Use PREFIX to provide a 1-character tag to identify which stage the insn comes from.
+  wire [255:0] f_disasm;
+  Disasm #(
+      .PREFIX("F")
+  ) disasm_0fetch (
+      .insn  (instr),
+      .disasm(f_disasm)
+  );
+
   /****************/
   /* DECODE STAGE */
   /****************/
 
+ assign {insn7bit,
+          insn_rs2,
+          insn_rs1,
+          insn3bit,
+          insn_rd,
+          insn_opcode} = (branch_taken == 0) ? instr:0;// = insn_from_imem;
+
+  assign {imm_b_temp[12],
+          imm_b_temp[10:5]} = insn7bit,
+        {imm_b_temp[4:1],
+        imm_b_temp[11]} = insn_rd,
+        imm_b_temp[0] = 1'b0;
+
+  wire [ 4:0] imm_shamt = (branch_taken == 0)?instr[24:20]:5'b0;
+  assign imm_b_sext_temp = {{19{imm_b_temp[12]}}, imm_b_temp[12:0]};
+  assign imm_i = (branch_taken == 0)?instr[31:20]:12'b0;
+  assign imm_s[11:5] = (branch_taken == 0)?instr[31:25]:7'b0;
+  assign imm_s[4:0] = (branch_taken==0)?instr[11:7]:5'b0; 
+  assign {imm_b[12], imm_b[10:5]} = (branch_taken == 0)?insn7bit:7'b0;
+  assign {imm_b[4:1], imm_b[11]} = (branch_taken == 0)?instr[11:7]:5'b0;
+  assign imm_b[0] = 1'b0;
+  assign {imm_j[20], imm_j[10:1], imm_j[11], imm_j[19:12], imm_j[0]} = (branch_taken == 0)?{instr[31:12], 1'b0}:21'b0;
+  assign imm_u = (branch_taken == 0)?instr[31:12]:20'b0;
+  assign imm_i = (branch_taken == 0)?instr[31:20]:12'b0;
+  assign wd_rd_no = stateW.rd_no_W;
+
+  assign imm_i_sext = {{20{imm_i[11]}}, imm_i[11:0]};
+  assign imm_i_ext = {{20{1'b0}}, imm_i[11:0]};
+  assign imm_s_sext = {{20{imm_s[11]}}, imm_s[11:0]};
+  assign imm_b_sext = {{19{imm_b[12]}}, imm_b[12:0]};
+  assign imm_j_sext = {{11{imm_j[20]}}, imm_j[20:0]};
+  assign imm_u_ext = {{12{1'b0}},imm_u[19:0]};
+
+  assign insnSetX.insn_lui = insn_opcode == OpcodeLui;
+  assign insnSetX.insn_auipc = insn_opcode == OpcodeAuipc;
+  assign insnSetX.insn_jal = insn_opcode == OpcodeJal;
+  assign insnSetX.insn_jalr = insn_opcode == OpcodeJalr;
+
+  assign insnSetX.insn_beq = insn_opcode == OpcodeBranch && instr[14:12] == 3'b000;
+  assign insnSetX.insn_bne = insn_opcode == OpcodeBranch && instr[14:12] == 3'b001;
+  assign insnSetX.insn_blt = insn_opcode == OpcodeBranch && instr[14:12] == 3'b100;
+  assign insnSetX.insn_bge = insn_opcode == OpcodeBranch && instr[14:12] == 3'b101;
+  assign insnSetX.insn_bltu = insn_opcode == OpcodeBranch && instr[14:12] == 3'b110;
+  assign insnSetX.insn_bgeu = insn_opcode == OpcodeBranch && instr[14:12] == 3'b111;
+
+  assign insnSetX.insn_lb =  insn_opcode == OpcodeLoad && instr[14:12] == 3'b000;
+  assign insnSetX.insn_lh =  insn_opcode == OpcodeLoad && instr[14:12] == 3'b001;
+  assign insnSetX.insn_lw =  insn_opcode == OpcodeLoad && instr[14:12] == 3'b010;
+  assign insnSetX.insn_lbu = insn_opcode  == OpcodeLoad && instr[14:12] == 3'b100;
+  assign insnSetX.insn_lhu = insn_opcode  == OpcodeLoad && instr[14:12] == 3'b101;
+
+  assign insnSetX.insn_sb = insn_opcode == OpcodeStore && instr[14:12] == 3'b000;
+  assign insnSetX.insn_sh = insn_opcode == OpcodeStore && instr[14:12] == 3'b001;
+  assign insnSetX.insn_sw = insn_opcode == OpcodeStore && instr[14:12] == 3'b010;
+
+  assign insnSetX.insn_addi = insn_opcode == OpcodeRegImm && instr[14:12] == 3'b000;
+  assign insnSetX.insn_slti = insn_opcode == OpcodeRegImm && instr[14:12] == 3'b010;
+  assign insnSetX.insn_sltiu =insn_opcode == OpcodeRegImm && instr[14:12] == 3'b011;
+  assign insnSetX.insn_xori = insn_opcode == OpcodeRegImm && instr[14:12] == 3'b100;
+  assign insnSetX.insn_ori = insn_opcode== OpcodeRegImm && instr[14:12] == 3'b110;
+  assign insnSetX.insn_andi = insn_opcode == OpcodeRegImm && instr[14:12] == 3'b111;
+
+  assign insnSetX.insn_slli = insn_opcode == OpcodeRegImm && instr[14:12] == 3'b001 && instr[31:25] == 7'd0;
+  assign insnSetX.insn_srli = insn_opcode == OpcodeRegImm && instr[14:12] == 3'b101 && instr[31:25] == 7'd0;
+  assign insnSetX.insn_srai = insn_opcode == OpcodeRegImm && instr[14:12] == 3'b101 && instr[31:25] == 7'b0100000;
+
+  assign insnSetX.insn_add = insn_opcode == OpcodeRegReg && instr[14:12] == 3'b000 && instr[31:25] == 7'd0;
+  assign insnSetX.insn_sub  = insn_opcode == OpcodeRegReg && instr[14:12] == 3'b000 && instr[31:25] == 7'b0100000;
+  assign insnSetX.insn_sll = insn_opcode == OpcodeRegReg && instr[14:12] == 3'b001 && instr[31:25] == 7'd0;
+  assign insnSetX.insn_slt = insn_opcode == OpcodeRegReg && instr[14:12] == 3'b010 && instr[31:25] == 7'd0;
+  assign insnSetX.insn_sltu = insn_opcode == OpcodeRegReg && instr[14:12] == 3'b011 && instr[31:25] == 7'd0;
+  assign insnSetX.insn_xor = insn_opcode == OpcodeRegReg && instr[14:12] == 3'b100 && instr[31:25] == 7'd0;
+  assign insnSetX.insn_srl = insn_opcode == OpcodeRegReg && instr[14:12] == 3'b101 && instr[31:25] == 7'd0;
+  assign insnSetX.insn_sra  = insn_opcode == OpcodeRegReg && instr[14:12] == 3'b101 && instr[31:25] == 7'b0100000;
+  assign insnSetX.insn_or = insn_opcode == OpcodeRegReg && instr[14:12] == 3'b110 && instr[31:25] == 7'd0;
+  assign insnSetX.insn_and = insn_opcode == OpcodeRegReg && instr[14:12] == 3'b111 && instr[31:25] == 7'd0;
+
+  assign insnSetX.insn_mul    = insn_opcode == OpcodeRegReg && instr[31:25] == 7'd1 && instr[14:12] == 3'b000;
+  assign insnSetX.insn_mulh   = insn_opcode == OpcodeRegReg && instr[31:25] == 7'd1 && instr[14:12] == 3'b001;
+  assign insnSetX.insn_mulhsu = insn_opcode == OpcodeRegReg && instr[31:25] == 7'd1 && instr[14:12] == 3'b010;
+  assign insnSetX.insn_mulhu  = insn_opcode == OpcodeRegReg && instr[31:25] == 7'd1 && instr[14:12] == 3'b011;
+  assign insnSetX.insn_div    = insn_opcode == OpcodeRegReg && instr[31:25] == 7'd1 && instr[14:12] == 3'b100;
+  assign insnSetX.insn_divu   = insn_opcode == OpcodeRegReg && instr[31:25] == 7'd1 && instr[14:12] == 3'b101;
+  assign insnSetX.insn_rem    = insn_opcode == OpcodeRegReg && instr[31:25] == 7'd1 && instr[14:12] == 3'b110;
+  assign insnSetX.insn_remu   = insn_opcode == OpcodeRegReg && instr[31:25] == 7'd1 && instr[14:12] == 3'b111;
+ 
+  assign insnSetX.insn_ecall = insn_opcode == OpcodeEnviron && instr[31:7] == 25'd0;
+  assign insnSetX.insn_fence = insn_opcode == OpcodeMiscMem;
+
   stage_decode_t stateD;
-  always_ff @(posedge clk) begin
+  always_comb  begin
     if (rst) begin
-      stateD <= '{
+      stateD = '{
         pc_D: 0,
         insn_D: 0,
         cycle_status_D: CYCLE_RESET,
@@ -711,48 +796,14 @@ module DatapathAxilMemory (
       };
     end else begin
       begin
-        // if (branch_taken) begin
-        //   stateD <= 0;
-        //   stateD.cycle_status_D <= CYCLE_TAKEN_BRANCH;
-        // end else begin
         if (branch_taken == 1'b1) begin
-          stateD <= 0;
-          stateD.pc_D <= fetch_pc_pass;
-          stateD.insn_D <= fetch_insn_pass;
-          stateD.cycle_status_D <= fetch_cycle_status_pass;
-        end if (loadStall || divStall || fenceStall) begin
-        //   stateD <= 0;
-        //   stateD.pc <= fetch_pc_pass;
-        //   decode_stateDstate.insn <= fetch_insn_pass;
-        //   stateD.cycle_status_D <= fetch_cycle_status_pass;
-        //end if (mux_fence == 1'b1) begin
-            //execute_state <= 0;
-
-        // stateD <= '{
-        //     pc_D: pcCurr,
-        //     insn_D: instr,
-        //     cycle_status_D: cycleStatus,
-        //     rd_no_D: insn_opcode == OpcodeBranch ? 0 : insn_rd,
-      
-        //     rs1_no_D: insn_opcode == OpcodeLui ? 0: insn_rs1,
-        //     rs1_data_temp_D: rs1_data_temp,
-        //     rs2_no_D: ((insn_opcode == OpcodeRegImm) || (insn_opcode == OpcodeLui)) ? 0: insn_rs2,
-        //     rs2_data_temp_D: rs2_data_temp,
-        //     insn7bit_D: insn_opcode == OpcodeLui ? 0: insn7bit,
-        //     insn3bit_D: insn_opcode == OpcodeLui ? 0: insn3bit,
-        //     addr_to_dmem_D: 0,
-        //     store_we_to_dmem_D: 0,
-        //     store_data_to_dmem_D: 0,
-        //     insn_imem_D: insn_from_imem,
-        //     imm_i_sext_D: 0,
-        //     insn_opcode_D: insn_opcode,
-        //     dec_control_D: '{default:0}
-        //   };
-
-        end else begin
-            stateD <= '{
-            pc_D: fetch_pc_pass,
-            insn_D: fetch_insn_pass,
+          stateD = 0;
+          stateD.cycle_status_D = fetch_cycle_status_pass;
+        end 
+        else begin
+            stateD = '{
+            pc_D: imem.ARADDR,
+            insn_D: instr,
             cycle_status_D: fetch_cycle_status_pass,
             rd_no_D: ((insn_opcode == 7'h63) || (insn_opcode == 7'h23)) ? 0 : insn_rd,
       
@@ -769,7 +820,7 @@ module DatapathAxilMemory (
             addr_to_dmem_D: 0,
             store_we_to_dmem_D: 0,
             store_data_to_dmem_D: 0,
-            insn_imem_D: fetch_insn_pass,
+            insn_imem_D: instr,
             imm_i_sext_D: 0,
             insn_opcode_D: insn_opcode,
             dec_control_D: '{default:0}
@@ -778,97 +829,7 @@ module DatapathAxilMemory (
       end
     end
   end
-  wire [255:0] d_disasm;
-  Disasm #(
-      .PREFIX("D")
-  ) disasm_1decode (
-      .insn  (stateD.insn_D),
-      .disasm(d_disasm)
-  );
 
-  assign imm_i = stateD.insn_imem_D[31:20];
-  wire [ 4:0] imm_shamt = stateD.insn_imem_D[24:20];
-    logic [1:0] selectDivider;
-  logic [`REG_SIZE] divMulticycle;
-
-  // assign imm_s[11:5] = stateD.insn7bit_D, imm_s[4:0] = stateD.insn_imem_D[11:7];
-  assign imm_s[11:5] = stateD.insn_imem_D[31:25], imm_s[4:0] = stateD.insn_imem_D[11:7]; 
-
-  assign {imm_b[12], imm_b[10:5]} = stateD.insn7bit_D, {imm_b[4:1], imm_b[11]} = stateD.insn_imem_D[11:7], imm_b[0] = 1'b0;
-
-  assign {imm_j[20], imm_j[10:1], imm_j[11], imm_j[19:12], imm_j[0]} = {stateD.insn_imem_D[31:12], 1'b0};
-  
-  assign imm_u = stateD.insn_imem_D[31:12];
-
-  logic [1:0] mux_val_wd;
-  logic [4:0] wd_rd_no;
-  logic divStall;
-  logic fenceStall;
-  logic loadStall;
-  assign wd_rd_no = stateW.rd_no_W;
-
-  assign imm_i_sext = {{20{imm_i[11]}}, imm_i[11:0]};
-  assign imm_i_ext = {{20{1'b0}}, imm_i[11:0]};
-  assign imm_s_sext = {{20{imm_s[11]}}, imm_s[11:0]};
-  assign imm_b_sext = {{19{imm_b[12]}}, imm_b[12:0]};
-  assign imm_j_sext = {{11{imm_j[20]}}, imm_j[20:0]};
-  assign imm_u_ext = {{12{1'b0}},imm_u[19:0]};
-
-  assign insnSetX.insn_lui = stateD.insn_opcode_D == OpcodeLui;
-  assign insnSetX.insn_auipc = stateD.insn_opcode_D == OpcodeAuipc;
-  assign insnSetX.insn_jal = stateD.insn_opcode_D == OpcodeJal;
-  assign insnSetX.insn_jalr = stateD.insn_opcode_D == OpcodeJalr;
-
-  assign insnSetX.insn_beq = stateD.insn_opcode_D == OpcodeBranch && stateD.insn_imem_D[14:12] == 3'b000;
-  assign insnSetX.insn_bne = stateD.insn_opcode_D == OpcodeBranch && stateD.insn_imem_D[14:12] == 3'b001;
-  assign insnSetX.insn_blt = stateD.insn_opcode_D == OpcodeBranch && stateD.insn_imem_D[14:12] == 3'b100;
-  assign insnSetX.insn_bge = stateD.insn_opcode_D == OpcodeBranch && stateD.insn_imem_D[14:12] == 3'b101;
-  assign insnSetX.insn_bltu = stateD.insn_opcode_D == OpcodeBranch && stateD.insn_imem_D[14:12] == 3'b110;
-  assign insnSetX.insn_bgeu = stateD.insn_opcode_D == OpcodeBranch && stateD.insn_imem_D[14:12] == 3'b111;
-
-  assign insnSetX.insn_lb = stateD.insn_opcode_D == OpcodeLoad && stateD.insn_imem_D[14:12] == 3'b000;
-  assign insnSetX.insn_lh = stateD.insn_opcode_D == OpcodeLoad && stateD.insn_imem_D[14:12] == 3'b001;
-  assign insnSetX.insn_lw = stateD.insn_opcode_D == OpcodeLoad && stateD.insn_imem_D[14:12] == 3'b010;
-  assign insnSetX.insn_lbu = stateD.insn_opcode_D == OpcodeLoad && stateD.insn_imem_D[14:12] == 3'b100;
-  assign insnSetX.insn_lhu = stateD.insn_opcode_D == OpcodeLoad && stateD.insn_imem_D[14:12] == 3'b101;
-
-  assign insnSetX.insn_sb = stateD.insn_opcode_D == OpcodeStore && stateD.insn_imem_D[14:12] == 3'b000;
-  assign insnSetX.insn_sh = stateD.insn_opcode_D == OpcodeStore && stateD.insn_imem_D[14:12] == 3'b001;
-  assign insnSetX.insn_sw = stateD.insn_opcode_D == OpcodeStore && stateD.insn_imem_D[14:12] == 3'b010;
-
-  assign insnSetX.insn_addi = stateD.insn_opcode_D == OpcodeRegImm && stateD.insn_imem_D[14:12] == 3'b000;
-  assign insnSetX.insn_slti = stateD.insn_opcode_D == OpcodeRegImm && stateD.insn_imem_D[14:12] == 3'b010;
-  assign insnSetX.insn_sltiu = stateD.insn_opcode_D == OpcodeRegImm && stateD.insn_imem_D[14:12] == 3'b011;
-  assign insnSetX.insn_xori = stateD.insn_opcode_D == OpcodeRegImm && stateD.insn_imem_D[14:12] == 3'b100;
-  assign insnSetX.insn_ori = stateD.insn_opcode_D == OpcodeRegImm && stateD.insn_imem_D[14:12] == 3'b110;
-  assign insnSetX.insn_andi = stateD.insn_opcode_D == OpcodeRegImm && stateD.insn_imem_D[14:12] == 3'b111;
-
-  assign insnSetX.insn_slli = stateD.insn_opcode_D == OpcodeRegImm && stateD.insn_imem_D[14:12] == 3'b001 && stateD.insn_imem_D[31:25] == 7'd0;
-  assign insnSetX.insn_srli = stateD.insn_opcode_D == OpcodeRegImm && stateD.insn_imem_D[14:12] == 3'b101 && stateD.insn_imem_D[31:25] == 7'd0;
-  assign insnSetX.insn_srai = stateD.insn_opcode_D == OpcodeRegImm && stateD.insn_imem_D[14:12] == 3'b101 && stateD.insn_imem_D[31:25] == 7'b0100000;
-
-  assign insnSetX.insn_add = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[14:12] == 3'b000 && stateD.insn_imem_D[31:25] == 7'd0;
-  assign insnSetX.insn_sub  = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[14:12] == 3'b000 && stateD.insn_imem_D[31:25] == 7'b0100000;
-  assign insnSetX.insn_sll = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[14:12] == 3'b001 && stateD.insn_imem_D[31:25] == 7'd0;
-  assign insnSetX.insn_slt = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[14:12] == 3'b010 && stateD.insn_imem_D[31:25] == 7'd0;
-  assign insnSetX.insn_sltu = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[14:12] == 3'b011 && stateD.insn_imem_D[31:25] == 7'd0;
-  assign insnSetX.insn_xor = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[14:12] == 3'b100 && stateD.insn_imem_D[31:25] == 7'd0;
-  assign insnSetX.insn_srl = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[14:12] == 3'b101 && stateD.insn_imem_D[31:25] == 7'd0;
-  assign insnSetX.insn_sra  = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[14:12] == 3'b101 && stateD.insn_imem_D[31:25] == 7'b0100000;
-  assign insnSetX.insn_or = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[14:12] == 3'b110 && stateD.insn_imem_D[31:25] == 7'd0;
-  assign insnSetX.insn_and = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[14:12] == 3'b111 && stateD.insn_imem_D[31:25] == 7'd0;
-
-  assign insnSetX.insn_mul    = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[31:25] == 7'd1 && stateD.insn_imem_D[14:12] == 3'b000;
-  assign insnSetX.insn_mulh   = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[31:25] == 7'd1 && stateD.insn_imem_D[14:12] == 3'b001;
-  assign insnSetX.insn_mulhsu = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[31:25] == 7'd1 && stateD.insn_imem_D[14:12] == 3'b010;
-  assign insnSetX.insn_mulhu  = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[31:25] == 7'd1 && stateD.insn_imem_D[14:12] == 3'b011;
-  assign insnSetX.insn_div    = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[31:25] == 7'd1 && stateD.insn_imem_D[14:12] == 3'b100;
-  assign insnSetX.insn_divu   = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[31:25] == 7'd1 && stateD.insn_imem_D[14:12] == 3'b101;
-  assign insnSetX.insn_rem    = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[31:25] == 7'd1 && stateD.insn_imem_D[14:12] == 3'b110;
-  assign insnSetX.insn_remu   = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[31:25] == 7'd1 && stateD.insn_imem_D[14:12] == 3'b111;
- 
-  assign insnSetX.insn_ecall = stateD.insn_opcode_D == OpcodeEnviron && stateD.insn_imem_D[31:7] == 25'd0;
-  assign insnSetX.insn_fence = stateD.insn_opcode_D == OpcodeMiscMem;
   always_comb begin
     imm_i_sext_X = 0;
     if (insnSetX.insn_jalr ||
@@ -989,6 +950,14 @@ module DatapathAxilMemory (
     end
   end
 
+  wire [255:0] d_disasm;
+  Disasm #(
+      .PREFIX("D")
+  ) disasm_1decode (
+      .insn  (stateD.insn_D),
+      .disasm(d_disasm)
+  );
+
   /****************/
   /* EXECUTE STAGE */
   /****************/
@@ -1056,52 +1025,6 @@ module DatapathAxilMemory (
     x_rs2_data = stateX.rs2_data_temp_X;
 
     mux_val_mx_wx = 0;
-  
-    // if (m_rd_no != 0 || w_rd_no != 0) begin
-    //   if (m_rd_no != 0) begin
-    //     if (m_rd_no == x_rs1_no && m_rd_no != x_rs2_no) begin
-    //       mux_val_mx_wx = 1;
-    //       x_rs1_data = (stateM.insn_opcode_M == OpcodeLoad)?rd_val_temp:stateM.rd_val_M;
-    //     end
-    //     if (m_rd_no == x_rs2_no && m_rd_no != x_rs1_no) begin
-    //       mux_val_mx_wx = 2;
-    //       x_rs2_data = (stateM.insn_opcode_M == OpcodeLoad)?rd_val_temp:stateM.rd_val_M;
-    //     end
-    //     if (m_rd_no == x_rs1_no && m_rd_no == x_rs2_no) begin
-    //         mux_val_mx_wx = 3;
-    //       x_rs1_data = stateM.rd_val_M;
-    //       x_rs2_data = stateM.rd_val_M;
-    //     end
-    //   end
-    //   if (w_rd_no != 0 && w_rd_no != m_rd_no) begin
-    //     if (w_rd_no == x_rs1_no && w_rd_no != x_rs2_no) begin
-    //       mux_val_mx_wx = 4;
-    //       x_rs1_data = stateW.rd_val_W;
-    //     end
-    //     if (w_rd_no == x_rs2_no && w_rd_no != x_rs1_no) begin
-    //       mux_val_mx_wx = 5;
-    //       x_rs2_data = stateW.rd_val_W;
-    //     end
-    //     if (w_rd_no == x_rs1_no && w_rd_no == x_rs2_no) begin
-    //         mux_val_mx_wx = 6;
-    //       x_rs1_data = stateW.rd_val_W;
-    //       x_rs2_data = stateW.rd_val_W;
-    //     end
-    //     if (m_rd_no != 0 && w_rd_no != 0 && m_rd_no != w_rd_no) begin
-    //       if (m_rd_no == x_rs1_no && w_rd_no == x_rs2_no && x_rs1_no != x_rs2_no) begin
-    //         mux_val_mx_wx = 7;
-    //         x_rs1_data = stateM.rd_val_M;
-    //         x_rs2_data = stateW.rd_val_W;
-
-    //       end
-    //       if (m_rd_no == x_rs2_no && w_rd_no == x_rs1_no && x_rs1_no != x_rs2_no) begin
-    //         mux_val_mx_wx = 8;
-    //         x_rs2_data = stateM.rd_val_M;
-    //         x_rs1_data = stateW.rd_val_W;
-    //       end
-    //     end
-    //   end
-    // end
 
     if (m_rd_no != 0 || w_rd_no != 0) begin
       if (m_rd_no == x_rs1_no && m_rd_no != x_rs2_no && m_rd_no != 0) begin
@@ -1494,10 +1417,6 @@ module DatapathAxilMemory (
     endcase
   end
 
-      // Rest of the code remains unchanged
-  // end
-
-
   /****************/
   /* MEMORY STAGE */
   /****************/
@@ -1505,6 +1424,18 @@ module DatapathAxilMemory (
   logic [31:0] rd_val_temp;//Temporary variable to store the value to be written to the register file in memory stage
   logic [31:0]stateM_store_data_to_dmem;
   logic [3:0]stateM_store_we_to_dmem_M; 
+  logic [`REG_SIZE] addr_to_dmem_temp;
+  // logic [31:0] address_bits_temp;
+  logic [`REG_SIZE] rd_val_mem_temp;
+  logic [`REG_SIZE] rs1_val_temp;
+  logic [`REG_SIZE] rs2_val_temp;
+  logic [`REG_SIZE] store_data_temp_mem;
+  logic [`REG_SIZE] address_bits_mem;
+  logic [`REG_SIZE] store_data_to_dmem_temp;
+  // edited
+  logic [1:0] wm_mux;
+  logic [1:0] div_rem_mux;
+  logic [`REG_SIZE] div_rem_two_cycle_data;
   // assign addr_to_dmem = stateM.addr_to_dmem_M & 32'hFFFFFFFC;
 
   always_ff @(posedge clk) begin
@@ -1565,20 +1496,6 @@ module DatapathAxilMemory (
       .insn  (stateM.insn_M),
       .disasm(m_disasm)
   );
-
-  logic [`REG_SIZE] addr_to_dmem_temp;
-  // logic [31:0] address_bits_temp;
-  logic [`REG_SIZE] rd_val_mem_temp;
-  logic [`REG_SIZE] rs1_val_temp;
-  logic [`REG_SIZE] rs2_val_temp;
-  logic [`REG_SIZE] store_data_temp_mem;
-  logic [`REG_SIZE] address_bits_mem;
-  logic [`REG_SIZE] store_data_to_dmem_temp;
-
-  // edited
-  logic [1:0] wm_mux;
-  logic [1:0] div_rem_mux;
-  logic [`REG_SIZE] div_rem_two_cycle_data;
 
   always_latch begin
   
@@ -1739,13 +1656,23 @@ module DatapathAxilMemory (
       end
   endcase
     end
-  // end
-  
-
   /****************/
   /* WRITEBACK STAGE */
   /****************/
   stage_write_t stateW;
+
+  assign dmem.WSTRB = store_we_to_dmem_temp;
+  assign dmem.WDATA = store_data_to_dmem_temp;
+  assign we = (stateW.insn_opcode_W == OpcodeBranch ||
+                  stateW.insn_opcode_W == OpcodeStore) ||
+                  (stateW.rd_no_W == 0)? 1'b0 : 1'b1;//If not store or branch or rd_no is 0, we = 1
+  assign halt = stateW.halt_sig_W;
+  assign dmem.AWADDR = addr_to_dmem_temp;
+
+  assign trace_writeback_cycle_status = stateW.cycle_status_W;
+  assign trace_writeback_pc = stateW.pc_W;
+  assign trace_writeback_insn = stateW.insn_W;
+
   always_ff @(posedge clk) begin
     if (rst) begin
       stateW <= '{
@@ -1771,13 +1698,8 @@ module DatapathAxilMemory (
           insn_W: stateM.insn_M,
           cycle_status_W: stateM.cycle_status_M,
           rd_no_W: stateM.rd_no_M,
-          // rd_val_W: ((selectDivider == 2'b1 || selectDivider == 2'b10) ?
-          //             divMulticycle : (stateM.insn_opcode_M == OpcodeLoad) ?
-          //             rd_val_temp : stateM.rd_val_M),
           rd_val_W: selectDivider == 2'b1 || selectDivider == 2'b10 ? 
                   divMulticycle : rd_val_mem_temp,
-          // rd_val_W: selectDivider == 2'b1 || selectDivider == 2'b10 ? 
-          //         divMulticycle : rd_val_mem_temp,
           rs1_no_W: stateM.rs1_no_M,
           rs1_data_temp_W: stateM.rs1_data_temp_M,
           rs2_no_W: stateM.rs2_no_M,
@@ -1801,22 +1723,7 @@ module DatapathAxilMemory (
       .disasm(wb_disasm)
   );
 
-  // assign store_data_to_dmem = stateW.store_data_to_dmem_W;
-  // assign store_we_to_dmem = stateW.store_we_to_dmem_W;
-  // assign addr_to_dmem = addr_to_dmem_temp;
-  assign dmem.WSTRB = store_we_to_dmem_temp;
-  assign dmem.WDATA = store_data_to_dmem_temp;
-  assign we = (stateW.insn_opcode_W == OpcodeBranch ||
-                  stateW.insn_opcode_W == OpcodeStore) ||
-                  (stateW.rd_no_W == 0)? 1'b0 : 1'b1;//If not store or branch or rd_no is 0, we = 1
-  assign halt = stateW.halt_sig_W;
-  assign dmem.AWADDR = addr_to_dmem_temp;
-  // assign addr_to_dmem = addr_to_dmem_temp & 32'hFFFFFFFC;
-  // assign addr_to_dmem = stateM.addr_to_dmem_M & 32'hFFFFFFFC;
 
-  assign trace_writeback_cycle_status = stateW.cycle_status_W;
-  assign trace_writeback_pc = stateW.pc_W;
-  assign trace_writeback_insn = stateW.insn_W;
 endmodule
 
 module MemorySingleCycle #(
