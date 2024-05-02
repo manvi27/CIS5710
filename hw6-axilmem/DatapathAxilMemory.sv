@@ -116,6 +116,91 @@ interface axi_if #(
   );
 endinterface
 
+// module MemoryAxiLite #(
+//     parameter int NUM_WORDS  = 32,
+//     parameter int ADDR_WIDTH = 32,
+//     parameter int DATA_WIDTH = 32
+// ) (
+//     axi_clkrst_if axi,
+//     axi_if.subord insn,
+//     axi_if.subord data
+// );
+
+//   // memory is an array of 4B words
+//   logic [DATA_WIDTH-1:0] mem_array[NUM_WORDS];
+//   localparam int AddrMsb = $clog2(NUM_WORDS) + 1;
+//   localparam int AddrLsb = 2;
+//   // [BR]RESP codes, from Section A 3.4.4 of AXI4 spec
+//   localparam bit [1:0] ResponseOkay = 2'b00;
+//   // localparam bit [1:0] ResponseSubordinateError = 2'b10;
+//   // localparam bit [1:0] ResponseDecodeError = 2'b11;
+
+// `ifndef FORMAL
+//   always_comb begin
+//     // memory addresses should always be 4B-aligned
+//     assert (!insn.ARVALID || insn.ARADDR[1:0] == 2'b00);
+//     assert (!data.ARVALID || data.ARADDR[1:0] == 2'b00);
+//     assert (!data.AWVALID || data.AWADDR[1:0] == 2'b00);
+//     // we don't use the protection bits
+//     assert (insn.ARPROT == 3'd0);
+//     assert (data.ARPROT == 3'd0);
+//     assert (data.AWPROT == 3'd0);
+//     assert (AddrMsb <= ADDR_WIDTH);
+//   end
+// `endif
+
+//   // TODO: changes will be needed throughout this module
+
+//   always_ff @(posedge axi.ACLK) begin
+//     if (!axi.ARESETn) begin
+//       // start out ready to accept incoming reads
+//       insn.ARREADY <= 1;
+//       data.ARREADY <= 1;
+//       // start out ready to accept an incoming write
+//       data.AWREADY <= 1;
+//       data.WREADY <= 1;
+
+//     end else begin     
+//       if(data.ARVALID) begin
+//         data.RVALID <= 1;
+//         data.RDATA <= mem_array[data.ARADDR[AddrMsb:AddrLsb]][DATA_WIDTH-1:0];
+//         data.RRESP <= ResponseOkay;
+//       end
+//       if(data.AWVALID && data.WVALID) begin
+//         data.BVALID <= 1;
+//         // for(int i = 0; i < DATA_WIDTH/8; i = i+1) begin
+//           if(data.WSTRB[0] == 1'b1) begin
+//             mem_array[data.AWADDR[AddrMsb:AddrLsb]][7:0] <= data.WDATA[7:0];
+//           end
+//           if(data.WSTRB[1] == 1'b1) begin
+//             mem_array[data.AWADDR[AddrMsb:AddrLsb]][15:8] <= data.WDATA[15:8];
+//           end
+//           if(data.WSTRB[2] == 1'b1) begin
+//             mem_array[data.AWADDR[AddrMsb:AddrLsb]][23:16] <= data.WDATA[23:16];
+//           end
+//           if(data.WSTRB[3] == 1'b1) begin
+//             mem_array[data.AWADDR[AddrMsb:AddrLsb]][31:24] <= data.WDATA[31:24];
+//           end
+//         // end
+        
+//         // mem_array[data.AWADDR[AddrMsb:AddrLsb]][DATA_WIDTH-1:0] <= data.WDATA;
+//         data.BRESP <= ResponseOkay;
+//       end
+//       if(insn.ARVALID) begin
+//         insn.RVALID <= 1;
+//         insn.RDATA <= mem_array[insn.ARADDR[AddrMsb:AddrLsb]][DATA_WIDTH-1:0];
+//         data.RRESP <= ResponseOkay;
+//       end
+//       if(insn.AWVALID && insn.WVALID) begin
+//         insn.BVALID <= 1;
+//         mem_array[data.AWADDR[AddrMsb:AddrLsb]][DATA_WIDTH-1:0] <= insn.WDATA;
+//         insn.BRESP <= ResponseOkay;
+//       end
+//     end
+//   end
+
+// endmodule
+
 module MemoryAxiLite #(
     parameter int NUM_WORDS  = 32,
     parameter int ADDR_WIDTH = 32,
@@ -130,8 +215,9 @@ module MemoryAxiLite #(
   logic [DATA_WIDTH-1:0] mem_array[NUM_WORDS];
   localparam int AddrMsb = $clog2(NUM_WORDS) + 1;
   localparam int AddrLsb = 2;
+
   // [BR]RESP codes, from Section A 3.4.4 of AXI4 spec
-  localparam bit [1:0] ResponseOkay = 2'b00;
+  // localparam bit [1:0] ResponseOkay = 2'b00;
   // localparam bit [1:0] ResponseSubordinateError = 2'b10;
   // localparam bit [1:0] ResponseDecodeError = 2'b11;
 
@@ -145,59 +231,191 @@ module MemoryAxiLite #(
     assert (insn.ARPROT == 3'd0);
     assert (data.ARPROT == 3'd0);
     assert (data.AWPROT == 3'd0);
-    assert (AddrMsb <= ADDR_WIDTH);
   end
 `endif
 
   // TODO: changes will be needed throughout this module
+  // Registers for AXI4Lite Signals
+  // Insn Address Signal
+  reg [ADDR_WIDTH-1 : 0] 	reg_insn_araddr;
+	reg  	reg_insn_arready;
+  reg  	reg_insn_arvalid;
+
+  // Insn Read Signals
+  reg [DATA_WIDTH-1 : 0] 	reg_insn_rdata;
+	reg [1 : 0] 	reg_insn_rresp;
+	reg  	reg_insn_rvalid;
+
+  // Data Address Signal
+  reg [ADDR_WIDTH-1 : 0] 	reg_data_araddr;
+	reg  	reg_data_arready;
+  reg  	reg_data_arvalid;
+
+  // Data Read Signals
+  reg [DATA_WIDTH-1 : 0] 	reg_data_rdata;
+	reg [1 : 0] 	reg_data_rresp;
+	reg  	reg_data_rvalid;
+
+  // Data Write Signals
+	reg [ADDR_WIDTH-1: 0] 	reg_data_awaddr;
+	reg  	reg_data_awready;
+	reg  	reg_data_wready;
+	reg [1 : 0] reg_data_bresp;
+	reg  	reg_data_bvalid;
+
+  wire reg_check;
+	reg	 awrite_en;
+
+
+	// Mapping output to registers
+	assign insn.ARREADY	= reg_insn_arready;
+	assign insn.RDATA	= reg_insn_rdata;
+	assign insn.RRESP	= reg_insn_rresp;
+	assign insn.RVALID	= reg_insn_rvalid;
+
+  assign data.ARREADY	= reg_data_arready;
+	assign data.RDATA	= reg_data_rdata;
+	assign data.RRESP	= reg_data_rresp;
+	assign data.RVALID	= reg_data_rvalid;
+
+  assign data.AWREADY	= reg_data_awready;
+	assign data.WREADY	= reg_data_wready;
+	assign data.BRESP	= reg_data_bresp;
+	assign data.BVALID	= reg_data_bvalid;
+
+  /**** Insn Read Handling ****/
 
   always_ff @(posedge axi.ACLK) begin
     if (!axi.ARESETn) begin
-      // start out ready to accept incoming reads
-      insn.ARREADY <= 1;
-      data.ARREADY <= 1;
-      // start out ready to accept an incoming write
-      data.AWREADY <= 1;
-      data.WREADY <= 1;
-
-    end else begin     
-      if(data.ARVALID) begin
-        data.RVALID <= 1;
-        data.RDATA <= mem_array[data.ARADDR[AddrMsb:AddrLsb]][DATA_WIDTH-1:0];
-        data.RRESP <= ResponseOkay;
-      end
-      if(data.AWVALID && data.WVALID) begin
-        data.BVALID <= 1;
-        // for(int i = 0; i < DATA_WIDTH/8; i = i+1) begin
-          if(data.WSTRB[0] == 1'b1) begin
-            mem_array[data.AWADDR[AddrMsb:AddrLsb]][7:0] <= data.WDATA[7:0];
-          end
-          if(data.WSTRB[1] == 1'b1) begin
-            mem_array[data.AWADDR[AddrMsb:AddrLsb]][15:8] <= data.WDATA[15:8];
-          end
-          if(data.WSTRB[2] == 1'b1) begin
-            mem_array[data.AWADDR[AddrMsb:AddrLsb]][23:16] <= data.WDATA[23:16];
-          end
-          if(data.WSTRB[3] == 1'b1) begin
-            mem_array[data.AWADDR[AddrMsb:AddrLsb]][31:24] <= data.WDATA[31:24];
-          end
-        // end
-        
-        // mem_array[data.AWADDR[AddrMsb:AddrLsb]][DATA_WIDTH-1:0] <= data.WDATA;
-        data.BRESP <= ResponseOkay;
-      end
-      if(insn.ARVALID) begin
-        insn.RVALID <= 1;
-        insn.RDATA <= mem_array[insn.ARADDR[AddrMsb:AddrLsb]][DATA_WIDTH-1:0];
-        data.RRESP <= ResponseOkay;
-      end
-      if(insn.AWVALID && insn.WVALID) begin
-        insn.BVALID <= 1;
-        mem_array[data.AWADDR[AddrMsb:AddrLsb]][DATA_WIDTH-1:0] <= insn.WDATA;
-        insn.BRESP <= ResponseOkay;
-      end
+	      reg_insn_arready <= 1'b1;
+	      reg_insn_araddr  <= 32'b0;
+    end else begin
+          // Read Request Condition
+          if (insn.ARVALID) begin
+	          // Valid read address asserted
+	          reg_insn_arready <= 1'b1;
+	          // Store address for later use.
+	          reg_insn_araddr <= insn.ARADDR;
+	        end else begin
+	          reg_insn_arready <= 1'b0;
+	        end
     end
   end
+
+  // Handle Address Valid Signal Generation 
+	always_ff @(posedge axi.ACLK) begin
+    if (!axi.ARESETn) begin
+	      reg_insn_rvalid <= 0;
+	      reg_insn_rresp  <= 0;
+        reg_insn_rdata  <= 0;
+	  end else begin
+        // Condition for RVALID assertion
+	      if (reg_insn_arready && insn.ARVALID) begin
+	          // Asserted RVALID. 
+	          reg_insn_rvalid <= 1'b1;
+            reg_insn_rdata <= mem_array[insn.ARADDR[AddrMsb:AddrLsb]]; 
+            // Give OK Response
+	          reg_insn_rresp  <= 2'b0;
+	      end else if (insn.RREADY) begin
+	          // Master accepts the read data.
+	          reg_insn_rvalid <= 1'b0;
+	      end                
+	  end
+	end
+
+  /**** Data Read Handling ****/
+  // Handle Address Ready Signal Generation 
+  always_ff @(posedge axi.ACLK) begin
+    if (!axi.ARESETn) begin
+	      reg_data_arready <= 1'b1;
+	      reg_data_araddr  <= 32'b0;
+    end else begin
+          if (data.ARVALID) begin
+	          reg_data_arready <= 1'b1;
+	        end else begin
+            reg_data_arready <= 1'b1;
+	        end
+    end
+  end
+
+  // Handle Address Valid Signal Generation 
+	always_ff @(posedge axi.ACLK) begin
+    if (!axi.ARESETn) begin
+	      reg_data_rvalid <= 0;
+	      reg_data_rresp  <= 0;
+        reg_data_rdata  <= 0;
+	  end else begin
+        if (reg_data_arready && data.ARVALID) begin
+	          reg_data_rvalid <= 1'b1;
+            reg_data_rdata <= mem_array[data.ARADDR[AddrMsb:AddrLsb]];
+	          reg_data_rresp  <= 2'b0;
+        end else if (data.RREADY) begin
+	          reg_data_rvalid <= 1'b0;
+	      end                
+	  end
+	end    
+
+  /**** Data Write Handling: Only for Data ****/
+  always_ff @(posedge axi.ACLK) begin
+	  if (!axi.ARESETn) begin
+	    reg_data_awready <= 1'b1;
+	    awrite_en <= 1'b1;
+      reg_data_wready <= 1'b1;
+	  end else begin    
+      if (data.AWVALID && data.WVALID) begin
+          reg_data_awready <= 1'b1;
+          awrite_en <= 1'b0;
+          reg_data_wready <= 1'b1;
+
+      end else if (data.BREADY && reg_data_bvalid) begin
+          awrite_en <= 1'b1;
+          reg_data_awready <= 1'b0;
+          reg_data_wready <= 1'b0;
+      end else begin
+          reg_data_awready <= 1'b0;
+          reg_data_wready <= 1'b0;
+      end
+	  end 
+	end   
+
+	assign reg_check = data.WVALID && data.AWVALID;
+
+	always_ff @(posedge axi.ACLK) begin
+	  if (!axi.ARESETn) begin
+	  end else begin
+      if (reg_check) begin
+        if (data.WSTRB[0]) begin
+          mem_array[data.AWADDR[AddrMsb:AddrLsb]][7:0] <= data.WDATA[7:0];
+        end
+        if (data.WSTRB[1]) begin
+          mem_array[data.AWADDR[AddrMsb:AddrLsb]][15:8] <= data.WDATA[15:8];
+        end
+        if (data.WSTRB[2]) begin
+          mem_array[data.AWADDR[AddrMsb:AddrLsb]][23:16] <= data.WDATA[23:16];
+        end
+        if (data.WSTRB[3]) begin
+          mem_array[data.AWADDR[AddrMsb:AddrLsb]][31:24] <= data.WDATA[31:24];
+        end
+      end
+	  end
+	end    
+
+	always_ff @(posedge axi.ACLK) begin
+	  if (!axi.ARESETn) begin
+	      reg_data_bvalid  <= 0;
+	      reg_data_bresp   <= 2'b0;
+	  end else begin    
+	      //if (reg_data_awready && data.AWVALID && ~reg_data_bvalid && reg_data_wready && data.WVALID) begin
+        if (reg_data_awready && data.AWVALID && reg_data_wready && data.WVALID) begin
+          reg_data_bvalid <= 1'b1;
+          reg_data_bresp  <= 2'b0;
+	      end else begin
+          if (data.BREADY) begin
+            reg_data_bvalid <= 1'b0; 
+          end  
+	      end
+	    end
+	end 
 
 endmodule
 
@@ -449,6 +667,9 @@ typedef struct packed {
   logic branch_taken_M;
   logic [`REG_SIZE] address_bits_M;
   logic [`REG_SIZE] pcNext_M;
+  logic lw_stall_m;
+  logic div_stall_m;
+  logic mux_fence_m;
   insn_set mem_control_M;
 } stage_memory_t;
 
@@ -467,6 +688,8 @@ typedef struct packed {
   logic halt_sig_W;
   logic [3:0] store_we_to_dmem_W;
   logic [`REG_SIZE] store_data_to_dmem_W;
+  logic [`REG_SIZE] address_bits_wb;
+  insn_set write_control_W;
 } stage_write_t;
 
 module DatapathAxilMemory (
@@ -513,14 +736,96 @@ module DatapathAxilMemory (
   localparam bit [`OPCODE_SIZE] OpcodeAuipc = 7'b00_101_11;//0x17
   localparam bit [`OPCODE_SIZE] OpcodeLui = 7'b01_101_11;//0x37
 
-  wire [6:0] insn7bit;
-  wire [4:0] insn_rs2;
-  wire [4:0] insn_rs1;
-  wire [2:0] insn3bit;
-  wire [4:0] insn_rd;
-  wire [`OPCODE_SIZE] insn_opcode;
+  // cycle counter, not really part of any stage but useful for orienting within GtkWave
+  // do not rename this as the testbench uses this value
+  logic [`REG_SIZE] cycles_current;
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      cycles_current <= 0;
+    end else begin
+      cycles_current <= cycles_current + 1;
+    end
+  end
+
+  /***************/
+  /* FETCH STAGE */
+  /***************/
+
+  logic [`REG_SIZE] pcCurr;
+  logic [`REG_SIZE] pcNext;
+  wire [`REG_SIZE] instr;
+  cycle_status_e cycleStatus;
+  logic [`REG_SIZE] fetch_pc_pass;
+  logic [`REG_SIZE] fetch_insn_pass;
+  cycle_status_e f_cycle_status, fetch_cycle_status_pass;
+
+  stage_decode_t decodeBuffer;
+  logic lw_stall_m;
+  logic div_stall_m;
+  logic mux_fence_m;
+  logic branch_taken_m;
+
+  // program counter
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      pcCurr <= 32'd0;
+      cycleStatus <= CYCLE_NO_STALL;
+      imem.RREADY <= 1'b1;
+    //   imem.RREADY <= 1'b0;
+    end else begin
+      cycleStatus <= CYCLE_NO_STALL;
+      if (branch_taken) begin
+        pcCurr <= pcNext; 
+      end 
+      else if(fenceStall || divStall || loadStall || mux_fence_m)  begin
+        // pcCurr <= pcCurr + 4; 
+      end
+      else begin
+        pcCurr <= pcCurr + 4;
+        imem.ARVALID <= 1'b1;
+        // imem.ARVALID <= 1'b0;
+      end
+    end
+  end
+
+
+  // send PC to imem
+  assign imem.ARADDR = pcCurr;
+//   assign imem.ARVALID = 1'b1;
+  assign instr = imem.RDATA;
+
+//   always_comb begin
+//     if(branch_taken == 1'b1) begin
+//       fetch_cycle_status_pass = CYCLE_TAKEN_BRANCH;
+//       fetch_insn_pass = 32'b0;
+//       fetch_pc_pass = 32'b0;
+//     end else begin
+//       fetch_cycle_status_pass = cycleStatus;
+//       fetch_insn_pass = instr;
+//       fetch_pc_pass = pcCurr;
+//     end
+//   end
+
+//   always_comb begin
+//     imem.ARADDR = 32'b0;
+//     if (imem.ARREADY)begin
+//         imem.ARADDR = pcCurr;
+//     end else begin
+//         // imem.ARADDR = pcCurr;
+//     end
+//   end 
+  
+  // Here's how to disassemble an insn into a string you can view in GtkWave.
+  // Use PREFIX to provide a 1-character tag to identify which stage the insn comes from.
+//   wire [255:0] f_disasm;
+//   Disasm #(
+//       .PREFIX("F")
+//   ) disasm_0fetch (
+//       .insn  (instr),
+//       .disasm(f_disasm)
+//   );
+
   wire [12:0] imm_b_temp;
-  logic [`REG_SIZE] imm_b_sext_temp;
   wire [11:0] imm_i;
   wire [11:0] imm_s;
   wire [12:0] imm_b;
@@ -556,6 +861,10 @@ module DatapathAxilMemory (
   logic [63:0] product;
   logic [31:0] product_signed;
   logic [63:0] product_final;
+  logic [31:0] dividend;
+  logic [31:0] divisor;
+  logic [31:0] remainder;
+  logic [31:0] quotient;
   logic branch_taken;
   logic [`REG_SIZE] rd_temp;
   logic [`OPCODE_SIZE] insn_opcode_x;
@@ -569,27 +878,19 @@ module DatapathAxilMemory (
   logic zero_check, div_rs1, div_rs2;
   logic rs1d, rs2d;
 
-  /*stalling flags and bypass muxes*/
-  logic [1:0] mux_val_wd;
-  logic [4:0] wd_rd_no;
-  logic divStall;
-  logic fenceStall;
-  logic loadStall;
-  
-  // cycle counter, not really part of any stage but useful for orienting within GtkWave
-  // do not rename this as the testbench uses this value
-  logic [`REG_SIZE] cycles_current;
-  always_ff @(posedge clk) begin
-    if (rst) begin
-      cycles_current <= 0;
-    end else begin
-      cycles_current <= cycles_current + 1;
-    end
-  end
+//   RegFile rf(.rd(stateW.rd_no_W),
+//             .rd_data(stateW.rd_val_W),
+//             .rs1(stateD.rs1_no_D),
+//             .x_rs1_data(rs1_data_temp), 
+//             .rs2(stateD.rs2_no_D),
+//             .x_rs2_data(rs2_data_temp),
+//             .clk(clk),
+//             .we(we),
+//             .rst(rst));
 
-  /*alu instance*/
+  
   RegFile rf(.rd(stateW.rd_no_W),
-            .rd_data(stateW.rd_val_W),
+            .rd_data(rd_val_mem_temp),
             .rs1(stateD.rs1_no_D),
             .x_rs1_data(rs1_data_temp), 
             .rs2(stateD.rs2_no_D),
@@ -598,19 +899,11 @@ module DatapathAxilMemory (
             .we(we),
             .rst(rst));
 
-  /*alu instance*/
   cla alu (.a(add_a),
           .b(add_b),
           .cin(add_cin),
           .sum(add_sum));
 
-  /*divider instance*/
-  logic [1:0] selectDivider;
-  logic [`REG_SIZE] divMulticycle;
-  logic [31:0] dividend;
-  logic [31:0] divisor;
-  logic [31:0] remainder;
-  logic [31:0] quotient;
   divider_unsigned_pipelined div(.clk(clk),
                                 .rst(rst),
                                 .i_dividend(dividend),
@@ -618,162 +911,134 @@ module DatapathAxilMemory (
                                 .o_quotient(quotient),
                                 .o_remainder(remainder));
 
-  /***************/
-  /* FETCH STAGE */
-  /***************/
+  insn_set exe_control_temp;
+  logic [4:0] rs2_val_or_not;
 
-  logic [`REG_SIZE] pcCurr;
-  logic [`REG_SIZE] pcNext;
-  wire [`REG_SIZE] instr;
-  cycle_status_e cycleStatus;
-  // logic [`REG_SIZE] fetch_pc_pass;
-  // logic [`REG_SIZE] fetch_insn_pass;
-  cycle_status_e f_cycle_status, fetch_cycle_status_pass;
-  logic stall_flag;
-  assign stall_flag = (fenceStall || divStall || loadStall);
-  // send PC to imem
-  assign imem.ARADDR = pcCurr;
-  assign imem.ARVALID = 1'b1;
-  assign instr = imem.RDATA;
+  logic [`REG_SIZE] decode_stall_temp;
+  cycle_status_e decode_state_cycle_status;
 
-  // program counter
-  always_ff @(posedge clk) begin
-    if (rst) begin
-      pcCurr <= 32'd0;
-      cycleStatus <= CYCLE_NO_STALL;
-    end else begin
-      cycleStatus <= CYCLE_NO_STALL;
-      if (branch_taken) begin
-        pcCurr <= pcNext; 
+  always_ff @(posedge clk)begin
+    if (rst == 1'b1) begin
+      decode_state_cycle_status <= CYCLE_RESET; 
+      decode_stall_temp <= 32'b0;
+    end else begin 
+      if (fenceStall == 1'b1) begin 
+       //stall
+      end else begin
+        decode_stall_temp <= (imem.RVALID == 1'b1)?imem.RDATA:32'b0;
+        decode_state_cycle_status <= CYCLE_NO_STALL;
       end 
-      // else if(fenceStall || divStall || loadStall)  begin
-        // pcCurr <= pcCurr + 4; 
-      // end
-      else if(stall_flag) begin
-      end
-      else begin
-        pcCurr <= pcCurr + 4;
-      end
-    end
-  end
-
-  // always_comb begin
-  //   if(branch_taken == 1'b1) begin
-  //     fetch_cycle_status_pass = CYCLE_TAKEN_BRANCH;
-  //     fetch_insn_pass = 32'b0;
-  //     fetch_pc_pass = 32'b0;
-  //   end else begin
-  //     fetch_cycle_status_pass = cycleStatus;
-  //     fetch_insn_pass = instr;
-  //     fetch_pc_pass = pcCurr;
-  //   end
-  // end
-  
-  // Here's how to disassemble an insn into a string you can view in GtkWave.
-  // Use PREFIX to provide a 1-character tag to identify which stage the insn comes from.
-  wire [255:0] f_disasm;
-  Disasm #(
-      .PREFIX("F")
-  ) disasm_0fetch (
-      .insn  (instr),
-      .disasm(f_disasm)
-  );
+    end 
+  end 
 
   /****************/
   /* DECODE STAGE */
   /****************/
 
- assign {insn7bit,
-          insn_rs2,
-          insn_rs1,
-          insn3bit,
-          insn_rd,
-          insn_opcode} = (branch_taken == 0) ? instr:0;// = insn_from_imem;
-
-  assign {imm_b_temp[12],
-          imm_b_temp[10:5]} = insn7bit,
-        {imm_b_temp[4:1],
-        imm_b_temp[11]} = insn_rd,
-        imm_b_temp[0] = 1'b0;
-
-  wire [ 4:0] imm_shamt = (branch_taken == 0)?instr[24:20]:5'b0;
-  assign imm_b_sext_temp = {{19{imm_b_temp[12]}}, imm_b_temp[12:0]};
-  assign imm_i = (branch_taken == 0)?instr[31:20]:12'b0;
-  assign imm_s[11:5] = (branch_taken == 0)?instr[31:25]:7'b0;
-  assign imm_s[4:0] = (branch_taken==0)?instr[11:7]:5'b0; 
-  assign {imm_b[12], imm_b[10:5]} = (branch_taken == 0)?insn7bit:7'b0;
-  assign {imm_b[4:1], imm_b[11]} = (branch_taken == 0)?instr[11:7]:5'b0;
-  assign imm_b[0] = 1'b0;
-  assign {imm_j[20], imm_j[10:1], imm_j[11], imm_j[19:12], imm_j[0]} = (branch_taken == 0)?{instr[31:12], 1'b0}:21'b0;
-  assign imm_u = (branch_taken == 0)?instr[31:12]:20'b0;
-  assign imm_i = (branch_taken == 0)?instr[31:20]:12'b0;
-  assign wd_rd_no = stateW.rd_no_W;
-
-  assign imm_i_sext = {{20{imm_i[11]}}, imm_i[11:0]};
-  assign imm_i_ext = {{20{1'b0}}, imm_i[11:0]};
-  assign imm_s_sext = {{20{imm_s[11]}}, imm_s[11:0]};
-  assign imm_b_sext = {{19{imm_b[12]}}, imm_b[12:0]};
-  assign imm_j_sext = {{11{imm_j[20]}}, imm_j[20:0]};
-  assign imm_u_ext = {{12{1'b0}},imm_u[19:0]};
-
-  assign insnSetX.insn_lui = insn_opcode == OpcodeLui;
-  assign insnSetX.insn_auipc = insn_opcode == OpcodeAuipc;
-  assign insnSetX.insn_jal = insn_opcode == OpcodeJal;
-  assign insnSetX.insn_jalr = insn_opcode == OpcodeJalr;
-
-  assign insnSetX.insn_beq = insn_opcode == OpcodeBranch && instr[14:12] == 3'b000;
-  assign insnSetX.insn_bne = insn_opcode == OpcodeBranch && instr[14:12] == 3'b001;
-  assign insnSetX.insn_blt = insn_opcode == OpcodeBranch && instr[14:12] == 3'b100;
-  assign insnSetX.insn_bge = insn_opcode == OpcodeBranch && instr[14:12] == 3'b101;
-  assign insnSetX.insn_bltu = insn_opcode == OpcodeBranch && instr[14:12] == 3'b110;
-  assign insnSetX.insn_bgeu = insn_opcode == OpcodeBranch && instr[14:12] == 3'b111;
-
-  assign insnSetX.insn_lb =  insn_opcode == OpcodeLoad && instr[14:12] == 3'b000;
-  assign insnSetX.insn_lh =  insn_opcode == OpcodeLoad && instr[14:12] == 3'b001;
-  assign insnSetX.insn_lw =  insn_opcode == OpcodeLoad && instr[14:12] == 3'b010;
-  assign insnSetX.insn_lbu = insn_opcode  == OpcodeLoad && instr[14:12] == 3'b100;
-  assign insnSetX.insn_lhu = insn_opcode  == OpcodeLoad && instr[14:12] == 3'b101;
-
-  assign insnSetX.insn_sb = insn_opcode == OpcodeStore && instr[14:12] == 3'b000;
-  assign insnSetX.insn_sh = insn_opcode == OpcodeStore && instr[14:12] == 3'b001;
-  assign insnSetX.insn_sw = insn_opcode == OpcodeStore && instr[14:12] == 3'b010;
-
-  assign insnSetX.insn_addi = insn_opcode == OpcodeRegImm && instr[14:12] == 3'b000;
-  assign insnSetX.insn_slti = insn_opcode == OpcodeRegImm && instr[14:12] == 3'b010;
-  assign insnSetX.insn_sltiu =insn_opcode == OpcodeRegImm && instr[14:12] == 3'b011;
-  assign insnSetX.insn_xori = insn_opcode == OpcodeRegImm && instr[14:12] == 3'b100;
-  assign insnSetX.insn_ori = insn_opcode== OpcodeRegImm && instr[14:12] == 3'b110;
-  assign insnSetX.insn_andi = insn_opcode == OpcodeRegImm && instr[14:12] == 3'b111;
-
-  assign insnSetX.insn_slli = insn_opcode == OpcodeRegImm && instr[14:12] == 3'b001 && instr[31:25] == 7'd0;
-  assign insnSetX.insn_srli = insn_opcode == OpcodeRegImm && instr[14:12] == 3'b101 && instr[31:25] == 7'd0;
-  assign insnSetX.insn_srai = insn_opcode == OpcodeRegImm && instr[14:12] == 3'b101 && instr[31:25] == 7'b0100000;
-
-  assign insnSetX.insn_add = insn_opcode == OpcodeRegReg && instr[14:12] == 3'b000 && instr[31:25] == 7'd0;
-  assign insnSetX.insn_sub  = insn_opcode == OpcodeRegReg && instr[14:12] == 3'b000 && instr[31:25] == 7'b0100000;
-  assign insnSetX.insn_sll = insn_opcode == OpcodeRegReg && instr[14:12] == 3'b001 && instr[31:25] == 7'd0;
-  assign insnSetX.insn_slt = insn_opcode == OpcodeRegReg && instr[14:12] == 3'b010 && instr[31:25] == 7'd0;
-  assign insnSetX.insn_sltu = insn_opcode == OpcodeRegReg && instr[14:12] == 3'b011 && instr[31:25] == 7'd0;
-  assign insnSetX.insn_xor = insn_opcode == OpcodeRegReg && instr[14:12] == 3'b100 && instr[31:25] == 7'd0;
-  assign insnSetX.insn_srl = insn_opcode == OpcodeRegReg && instr[14:12] == 3'b101 && instr[31:25] == 7'd0;
-  assign insnSetX.insn_sra  = insn_opcode == OpcodeRegReg && instr[14:12] == 3'b101 && instr[31:25] == 7'b0100000;
-  assign insnSetX.insn_or = insn_opcode == OpcodeRegReg && instr[14:12] == 3'b110 && instr[31:25] == 7'd0;
-  assign insnSetX.insn_and = insn_opcode == OpcodeRegReg && instr[14:12] == 3'b111 && instr[31:25] == 7'd0;
-
-  assign insnSetX.insn_mul    = insn_opcode == OpcodeRegReg && instr[31:25] == 7'd1 && instr[14:12] == 3'b000;
-  assign insnSetX.insn_mulh   = insn_opcode == OpcodeRegReg && instr[31:25] == 7'd1 && instr[14:12] == 3'b001;
-  assign insnSetX.insn_mulhsu = insn_opcode == OpcodeRegReg && instr[31:25] == 7'd1 && instr[14:12] == 3'b010;
-  assign insnSetX.insn_mulhu  = insn_opcode == OpcodeRegReg && instr[31:25] == 7'd1 && instr[14:12] == 3'b011;
-  assign insnSetX.insn_div    = insn_opcode == OpcodeRegReg && instr[31:25] == 7'd1 && instr[14:12] == 3'b100;
-  assign insnSetX.insn_divu   = insn_opcode == OpcodeRegReg && instr[31:25] == 7'd1 && instr[14:12] == 3'b101;
-  assign insnSetX.insn_rem    = insn_opcode == OpcodeRegReg && instr[31:25] == 7'd1 && instr[14:12] == 3'b110;
-  assign insnSetX.insn_remu   = insn_opcode == OpcodeRegReg && instr[31:25] == 7'd1 && instr[14:12] == 3'b111;
- 
-  assign insnSetX.insn_ecall = insn_opcode == OpcodeEnviron && instr[31:7] == 25'd0;
-  assign insnSetX.insn_fence = insn_opcode == OpcodeMiscMem;
-
   stage_decode_t stateD;
-  always_comb  begin
+//   always_ff @(posedge clk) begin
+//     if (rst) begin
+//       stateD <= '{
+//         pc_D: 0,
+//         insn_D: 0,
+//         cycle_status_D: CYCLE_RESET,
+//         rd_no_D: 0,
+//         rs1_no_D: 0,
+//         rs1_data_temp_D: 0,
+//         rs2_no_D: 0,
+//         rs2_data_temp_D: 0,
+//         insn7bit_D: 0,
+//         insn3bit_D: 0,
+//         addr_to_dmem_D: 0,
+//         store_we_to_dmem_D: 0,
+//         store_data_to_dmem_D: 0,
+//         insn_imem_D: 0,
+//         imm_i_sext_D: 0,
+//         insn_opcode_D: 0,
+//         dec_control_D: '{default:0}
+//       };
+//     end else begin
+//       begin
+//         // if (branch_taken) begin
+//         //   stateD <= 0;
+//         //   stateD.cycle_status_D <= CYCLE_TAKEN_BRANCH;
+//         // end else begin
+//         if (branch_taken == 1'b1) begin
+//           stateD <= 0;
+//           stateD.pc_D <= fetch_pc_pass;
+//           stateD.insn_D <= fetch_insn_pass;
+//           stateD.cycle_status_D <= fetch_cycle_status_pass;
+//         end if (loadStall || divStall || fenceStall) begin
+//         //   stateD <= 0;
+//         //   stateD.pc <= fetch_pc_pass;
+//         //   decode_stateDstate.insn <= fetch_insn_pass;
+//         //   stateD.cycle_status_D <= fetch_cycle_status_pass;
+//         //end if (mux_fence == 1'b1) begin
+//             //execute_state <= 0;
+
+//         // stateD <= '{
+//         //     pc_D: pcCurr,
+//         //     insn_D: instr,
+//         //     cycle_status_D: cycleStatus,
+//         //     rd_no_D: insn_opcode == OpcodeBranch ? 0 : insn_rd,
+      
+//         //     rs1_no_D: insn_opcode == OpcodeLui ? 0: insn_rs1,
+//         //     rs1_data_temp_D: rs1_data_temp,
+//         //     rs2_no_D: ((insn_opcode == OpcodeRegImm) || (insn_opcode == OpcodeLui)) ? 0: insn_rs2,
+//         //     rs2_data_temp_D: rs2_data_temp,
+//         //     insn7bit_D: insn_opcode == OpcodeLui ? 0: insn7bit,
+//         //     insn3bit_D: insn_opcode == OpcodeLui ? 0: insn3bit,
+//         //     addr_to_dmem_D: 0,
+//         //     store_we_to_dmem_D: 0,
+//         //     store_data_to_dmem_D: 0,
+//         //     insn_imem_D: insn_from_imem,
+//         //     imm_i_sext_D: 0,
+//         //     insn_opcode_D: insn_opcode,
+//         //     dec_control_D: '{default:0}
+//         //   };
+
+//         end else begin
+//             stateD <= '{
+//             pc_D: fetch_pc_pass,
+//             insn_D: fetch_insn_pass,
+//             cycle_status_D: fetch_cycle_status_pass,
+//             rd_no_D: ((insn_opcode == 7'h63) || (insn_opcode == 7'h23)) ? 0 : insn_rd,
+      
+//             rs1_no_D: insn_opcode == 7'h37 || insn_opcode == 7'h6f ? 0: insn_rs1,
+//             rs1_data_temp_D: 0,
+//             rs2_no_D: ((insn_opcode == 7'h13) || (insn_opcode == 7'h37) || 
+//                   (insn_opcode == 7'h3) || (insn_opcode == 7'h6f)) ? 0: insn_rs2,
+//             rs2_data_temp_D: 0,
+//             insn7bit_D: ((insn_opcode == 7'h37) || (insn_opcode == 7'h3) ||
+//                       (insn_opcode == 7'h37) || (insn_opcode == 7'h23)
+//                       || (insn_opcode == 7'h6f )) ? 0: insn7bit,
+//             insn3bit_D: insn_opcode == 7'h37 || insn_opcode == 7'h6f ? 0: insn3bit,
+//             // insn_funct3: insn_opcode == 7'h37 || insn_opcode == 7'h6f ? 0: insn_funct3,
+//             addr_to_dmem_D: 0,
+//             store_we_to_dmem_D: 0,
+//             store_data_to_dmem_D: 0,
+//             insn_imem_D: fetch_insn_pass,
+//             imm_i_sext_D: 0,
+//             insn_opcode_D: insn_opcode,
+//             dec_control_D: '{default:0}
+//           };
+//         end
+//       end
+//     end
+//   end
+
+  logic [`OPCODE_SIZE] insn_opcode_temp;
+  logic [`REG_SIZE] insn_buffer_temp;
+  cycle_status_e temp_cycle_status;
+
+  always_comb begin
+
+    insn_buffer_temp = 32'b0;
+    stateD = 0; 
+    stateD.cycle_status_D = decode_state_cycle_status;
+    insn_buffer_temp = 0;
+    insn_opcode_temp = 0;
+
     if (rst) begin
       stateD = '{
         pc_D: 0,
@@ -798,38 +1063,191 @@ module DatapathAxilMemory (
       begin
         if (branch_taken == 1'b1) begin
           stateD = 0;
-          stateD.cycle_status_D = fetch_cycle_status_pass;
+          stateD.cycle_status_D = CYCLE_TAKEN_BRANCH;
         end 
-        else begin
+        // else begin
+        if (lw_stall_m == 1'b1 || div_stall_m == 1'b1 || mux_fence_m == 1'b1) begin
+          insn_buffer_temp = decode_stall_temp;
+          insn_opcode_temp = decode_stall_temp[6:0];
+          // temp_cycle_status = decode_state_cycle_status;
+          // stateD.pc_D = pcCurr - 32'd4;
+          stateD = '{
+          pc_D: (pcCurr != 32'b0) ? (pcCurr - 32'd4) : (pcCurr),
+          insn_D: insn_buffer_temp,
+          cycle_status_D: decode_state_cycle_status,
+          rd_no_D: ((insn_opcode_temp == 7'h63) || (insn_opcode_temp == 7'h23)) ? 0 : insn_buffer_temp[11:7],
+          rs1_no_D: insn_opcode_temp == 7'h37 || insn_opcode_temp == 7'h6f ? 0 : insn_buffer_temp[19:15],
+          rs1_data_temp_D: 0,
+          rs2_no_D: ((insn_opcode_temp == 7'h13) || (insn_opcode_temp == 7'h37) || 
+                (insn_opcode_temp == 7'h3) || (insn_opcode_temp == 7'h6f)) ? 0: insn_buffer_temp[24:20],
+          rs2_data_temp_D: 0,
+          insn7bit_D: ((insn_opcode_temp == 7'h37) || (insn_opcode_temp == 7'h3) ||
+                    (insn_opcode_temp == 7'h37) || (insn_opcode_temp == 7'h23)
+                    || (insn_opcode_temp == 7'h6f )) ? 0: insn_buffer_temp[31:25],
+          insn3bit_D: insn_opcode_temp == 7'h37 || insn_opcode_temp == 7'h6f ? 0: insn_buffer_temp[14:12],
+          // insn_funct3: insn_opcode == 7'h37 || insn_opcode == 7'h6f ? 0: insn_funct3,
+          addr_to_dmem_D: 0,
+          store_we_to_dmem_D: 0,
+          store_data_to_dmem_D: 0,
+          insn_imem_D: insn_buffer_temp,
+          imm_i_sext_D: 0,
+          insn_opcode_D: insn_opcode_temp,
+          dec_control_D: '{default:0}
+        };
+        end else begin
+          if(imem.RVALID) begin
+            insn_buffer_temp = imem.RDATA;;
+            insn_opcode_temp = insn_buffer_temp[6:0];
             stateD = '{
-            pc_D: imem.ARADDR,
-            insn_D: instr,
-            cycle_status_D: fetch_cycle_status_pass,
-            rd_no_D: ((insn_opcode == 7'h63) || (insn_opcode == 7'h23)) ? 0 : insn_rd,
-      
-            rs1_no_D: insn_opcode == 7'h37 || insn_opcode == 7'h6f ? 0: insn_rs1,
+            pc_D: (pcCurr != 32'b0)?(pcCurr - 32'd4):(pcCurr),
+            insn_D: insn_buffer_temp,
+            cycle_status_D: CYCLE_NO_STALL,
+            rd_no_D: ((insn_opcode_temp == 7'h63) || (insn_opcode_temp == 7'h23)) ? 0 : insn_buffer_temp[11:7],
+            rs1_no_D: insn_opcode_temp == 7'h37 || insn_opcode_temp == 7'h6f ? 0 : insn_buffer_temp[19:15],
             rs1_data_temp_D: 0,
-            rs2_no_D: ((insn_opcode == 7'h13) || (insn_opcode == 7'h37) || 
-                  (insn_opcode == 7'h3) || (insn_opcode == 7'h6f)) ? 0: insn_rs2,
+            rs2_no_D: ((insn_opcode_temp == 7'h13) || (insn_opcode_temp == 7'h37) || 
+                  (insn_opcode_temp == 7'h3) || (insn_opcode_temp == 7'h6f)) ? 0: insn_buffer_temp[24:20],
             rs2_data_temp_D: 0,
-            insn7bit_D: ((insn_opcode == 7'h37) || (insn_opcode == 7'h3) ||
-                      (insn_opcode == 7'h37) || (insn_opcode == 7'h23)
-                      || (insn_opcode == 7'h6f )) ? 0: insn7bit,
-            insn3bit_D: insn_opcode == 7'h37 || insn_opcode == 7'h6f ? 0: insn3bit,
+            insn7bit_D: ((insn_opcode_temp == 7'h37) || (insn_opcode_temp == 7'h3) ||
+                      (insn_opcode_temp == 7'h37) || (insn_opcode_temp == 7'h23)
+                      || (insn_opcode_temp == 7'h6f )) ? 0: insn_buffer_temp[31:25],
+            insn3bit_D: insn_opcode_temp == 7'h37 || insn_opcode_temp == 7'h6f ? 0: insn_buffer_temp[14:12],
             // insn_funct3: insn_opcode == 7'h37 || insn_opcode == 7'h6f ? 0: insn_funct3,
             addr_to_dmem_D: 0,
             store_we_to_dmem_D: 0,
             store_data_to_dmem_D: 0,
-            insn_imem_D: instr,
+            insn_imem_D: insn_buffer_temp,
             imm_i_sext_D: 0,
-            insn_opcode_D: insn_opcode,
+            insn_opcode_D: insn_opcode_temp,
             dec_control_D: '{default:0}
           };
+            // temp_cycle_status = CYCLE_NO_STALL;
+          end
+        end 
+          
+          // stateD = '{
+          //   pc_D: (pcCurr != 32'b0)?(pcCurr - 32'd4):(pcCurr),
+          //   insn_D: insn_buffer_temp,
+          //   cycle_status_D: decode_state_cycle_status,
+          //   rd_no_D: ((insn_opcode_temp == 7'h63) || (insn_opcode_temp == 7'h23)) ? 0 : insn_buffer_temp[11:7],
+          //   rs1_no_D: insn_opcode_temp == 7'h37 || insn_opcode_temp == 7'h6f ? 0 : insn_buffer_temp[19:15],
+          //   rs1_data_temp_D: 0,
+          //   rs2_no_D: ((insn_opcode_temp == 7'h13) || (insn_opcode_temp == 7'h37) || 
+          //         (insn_opcode_temp == 7'h3) || (insn_opcode_temp == 7'h6f)) ? 0: insn_buffer_temp[24:20],
+          //   rs2_data_temp_D: 0,
+          //   insn7bit_D: ((insn_opcode_temp == 7'h37) || (insn_opcode_temp == 7'h3) ||
+          //             (insn_opcode_temp == 7'h37) || (insn_opcode_temp == 7'h23)
+          //             || (insn_opcode_temp == 7'h6f )) ? 0: insn_buffer_temp[31:25],
+          //   insn3bit_D: insn_opcode_temp == 7'h37 || insn_opcode_temp == 7'h6f ? 0: insn_buffer_temp[14:12],
+          //   // insn_funct3: insn_opcode == 7'h37 || insn_opcode == 7'h6f ? 0: insn_funct3,
+          //   addr_to_dmem_D: 0,
+          //   store_we_to_dmem_D: 0,
+          //   store_data_to_dmem_D: 0,
+          //   insn_imem_D: insn_buffer_temp,
+          //   imm_i_sext_D: 0,
+          //   insn_opcode_D: insn_opcode_temp,
+          //   dec_control_D: '{default:0}
+          // };
         end
+        // if(imem.RVALID) begin
+        //   stateD.cycle_status_D = CYCLE_NO_STALL;
+        // end
+        
       end
     end
-  end
+  // end
 
+  wire [255:0] d_disasm;
+  Disasm #(
+      .PREFIX("D")
+  ) disasm_1decode (
+      .insn  (stateD.insn_D),
+      .disasm(d_disasm)
+  );
+
+  assign imm_i = stateD.insn_imem_D[31:20];
+  wire [ 4:0] imm_shamt = stateD.insn_imem_D[24:20];
+    logic [1:0] selectDivider;
+  logic [`REG_SIZE] divMulticycle;
+
+  // assign imm_s[11:5] = stateD.insn7bit_D, imm_s[4:0] = stateD.insn_imem_D[11:7];
+  assign imm_s[11:5] = stateD.insn_imem_D[31:25], imm_s[4:0] = stateD.insn_imem_D[11:7]; 
+
+  assign {imm_b[12], imm_b[10:5]} = stateD.insn7bit_D, {imm_b[4:1], imm_b[11]} = stateD.insn_imem_D[11:7], imm_b[0] = 1'b0;
+
+  assign {imm_j[20], imm_j[10:1], imm_j[11], imm_j[19:12], imm_j[0]} = {stateD.insn_imem_D[31:12], 1'b0};
+  
+  assign imm_u = stateD.insn_imem_D[31:12];
+
+  logic [1:0] mux_val_wd;
+  logic [4:0] wd_rd_no;
+  logic divStall;
+  logic fenceStall;
+  logic loadStall;
+  assign wd_rd_no = stateW.rd_no_W;
+
+  assign imm_i_sext = {{20{imm_i[11]}}, imm_i[11:0]};
+  assign imm_i_ext = {{20{1'b0}}, imm_i[11:0]};
+  assign imm_s_sext = {{20{imm_s[11]}}, imm_s[11:0]};
+  assign imm_b_sext = {{19{imm_b[12]}}, imm_b[12:0]};
+  assign imm_j_sext = {{11{imm_j[20]}}, imm_j[20:0]};
+  assign imm_u_ext = {{12{1'b0}},imm_u[19:0]};
+
+  assign insnSetX.insn_lui = stateD.insn_opcode_D == OpcodeLui;
+  assign insnSetX.insn_auipc = stateD.insn_opcode_D == OpcodeAuipc;
+  assign insnSetX.insn_jal = stateD.insn_opcode_D == OpcodeJal;
+  assign insnSetX.insn_jalr = stateD.insn_opcode_D == OpcodeJalr;
+
+  assign insnSetX.insn_beq = stateD.insn_opcode_D == OpcodeBranch && stateD.insn_imem_D[14:12] == 3'b000;
+  assign insnSetX.insn_bne = stateD.insn_opcode_D == OpcodeBranch && stateD.insn_imem_D[14:12] == 3'b001;
+  assign insnSetX.insn_blt = stateD.insn_opcode_D == OpcodeBranch && stateD.insn_imem_D[14:12] == 3'b100;
+  assign insnSetX.insn_bge = stateD.insn_opcode_D == OpcodeBranch && stateD.insn_imem_D[14:12] == 3'b101;
+  assign insnSetX.insn_bltu = stateD.insn_opcode_D == OpcodeBranch && stateD.insn_imem_D[14:12] == 3'b110;
+  assign insnSetX.insn_bgeu = stateD.insn_opcode_D == OpcodeBranch && stateD.insn_imem_D[14:12] == 3'b111;
+
+  assign insnSetX.insn_lb = stateD.insn_opcode_D == OpcodeLoad && stateD.insn_imem_D[14:12] == 3'b000;
+  assign insnSetX.insn_lh = stateD.insn_opcode_D == OpcodeLoad && stateD.insn_imem_D[14:12] == 3'b001;
+  assign insnSetX.insn_lw = stateD.insn_opcode_D == OpcodeLoad && stateD.insn_imem_D[14:12] == 3'b010;
+  assign insnSetX.insn_lbu = stateD.insn_opcode_D == OpcodeLoad && stateD.insn_imem_D[14:12] == 3'b100;
+  assign insnSetX.insn_lhu = stateD.insn_opcode_D == OpcodeLoad && stateD.insn_imem_D[14:12] == 3'b101;
+
+  assign insnSetX.insn_sb = stateD.insn_opcode_D == OpcodeStore && stateD.insn_imem_D[14:12] == 3'b000;
+  assign insnSetX.insn_sh = stateD.insn_opcode_D == OpcodeStore && stateD.insn_imem_D[14:12] == 3'b001;
+  assign insnSetX.insn_sw = stateD.insn_opcode_D == OpcodeStore && stateD.insn_imem_D[14:12] == 3'b010;
+
+  assign insnSetX.insn_addi = stateD.insn_opcode_D == OpcodeRegImm && stateD.insn_imem_D[14:12] == 3'b000;
+  assign insnSetX.insn_slti = stateD.insn_opcode_D == OpcodeRegImm && stateD.insn_imem_D[14:12] == 3'b010;
+  assign insnSetX.insn_sltiu = stateD.insn_opcode_D == OpcodeRegImm && stateD.insn_imem_D[14:12] == 3'b011;
+  assign insnSetX.insn_xori = stateD.insn_opcode_D == OpcodeRegImm && stateD.insn_imem_D[14:12] == 3'b100;
+  assign insnSetX.insn_ori = stateD.insn_opcode_D == OpcodeRegImm && stateD.insn_imem_D[14:12] == 3'b110;
+  assign insnSetX.insn_andi = stateD.insn_opcode_D == OpcodeRegImm && stateD.insn_imem_D[14:12] == 3'b111;
+
+  assign insnSetX.insn_slli = stateD.insn_opcode_D == OpcodeRegImm && stateD.insn_imem_D[14:12] == 3'b001 && stateD.insn_imem_D[31:25] == 7'd0;
+  assign insnSetX.insn_srli = stateD.insn_opcode_D == OpcodeRegImm && stateD.insn_imem_D[14:12] == 3'b101 && stateD.insn_imem_D[31:25] == 7'd0;
+  assign insnSetX.insn_srai = stateD.insn_opcode_D == OpcodeRegImm && stateD.insn_imem_D[14:12] == 3'b101 && stateD.insn_imem_D[31:25] == 7'b0100000;
+
+  assign insnSetX.insn_add = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[14:12] == 3'b000 && stateD.insn_imem_D[31:25] == 7'd0;
+  assign insnSetX.insn_sub  = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[14:12] == 3'b000 && stateD.insn_imem_D[31:25] == 7'b0100000;
+  assign insnSetX.insn_sll = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[14:12] == 3'b001 && stateD.insn_imem_D[31:25] == 7'd0;
+  assign insnSetX.insn_slt = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[14:12] == 3'b010 && stateD.insn_imem_D[31:25] == 7'd0;
+  assign insnSetX.insn_sltu = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[14:12] == 3'b011 && stateD.insn_imem_D[31:25] == 7'd0;
+  assign insnSetX.insn_xor = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[14:12] == 3'b100 && stateD.insn_imem_D[31:25] == 7'd0;
+  assign insnSetX.insn_srl = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[14:12] == 3'b101 && stateD.insn_imem_D[31:25] == 7'd0;
+  assign insnSetX.insn_sra  = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[14:12] == 3'b101 && stateD.insn_imem_D[31:25] == 7'b0100000;
+  assign insnSetX.insn_or = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[14:12] == 3'b110 && stateD.insn_imem_D[31:25] == 7'd0;
+  assign insnSetX.insn_and = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[14:12] == 3'b111 && stateD.insn_imem_D[31:25] == 7'd0;
+
+  assign insnSetX.insn_mul    = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[31:25] == 7'd1 && stateD.insn_imem_D[14:12] == 3'b000;
+  assign insnSetX.insn_mulh   = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[31:25] == 7'd1 && stateD.insn_imem_D[14:12] == 3'b001;
+  assign insnSetX.insn_mulhsu = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[31:25] == 7'd1 && stateD.insn_imem_D[14:12] == 3'b010;
+  assign insnSetX.insn_mulhu  = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[31:25] == 7'd1 && stateD.insn_imem_D[14:12] == 3'b011;
+  assign insnSetX.insn_div    = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[31:25] == 7'd1 && stateD.insn_imem_D[14:12] == 3'b100;
+  assign insnSetX.insn_divu   = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[31:25] == 7'd1 && stateD.insn_imem_D[14:12] == 3'b101;
+  assign insnSetX.insn_rem    = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[31:25] == 7'd1 && stateD.insn_imem_D[14:12] == 3'b110;
+  assign insnSetX.insn_remu   = stateD.insn_opcode_D == OpcodeRegReg && stateD.insn_imem_D[31:25] == 7'd1 && stateD.insn_imem_D[14:12] == 3'b111;
+ 
+  assign insnSetX.insn_ecall = stateD.insn_opcode_D == OpcodeEnviron && stateD.insn_imem_D[31:7] == 25'd0;
+  assign insnSetX.insn_fence = stateD.insn_opcode_D == OpcodeMiscMem;
   always_comb begin
     imm_i_sext_X = 0;
     if (insnSetX.insn_jalr ||
@@ -879,12 +1297,14 @@ module DatapathAxilMemory (
         stateD.rs1_no_D: begin
         
             mux_val_wd = 2'b01;
-            rs1_mux_data = stateW.rd_val_W;
+            // rs1_mux_data = stateW.rd_val_W;
+            rs1_mux_data = rd_val_mem_temp;
         end
         stateD.rs2_no_D: begin
         
             mux_val_wd = 2'b10;
-            rs2_mux_data = stateW.rd_val_W;
+            // rs2_mux_data = stateW.rd_val_W;
+            rs2_mux_data = rd_val_mem_temp;
         end
         default: begin
             // No action needed
@@ -926,8 +1346,10 @@ module DatapathAxilMemory (
       end
     end
 
-    if (branch_taken == 1'b1) begin// || insnSetX.insn_fence == 1'b1) begin //adding bubble for fence and branch
-      tempStateX = 0;
+    tempStateX = 0;
+
+    if (branch_taken == 1'b1 || branch_taken_m == 1'b1 || insnSetX.insn_fence == 1'b1) begin// || insnSetX.insn_fence == 1'b1) begin //adding bubble for fence and branch
+    //   tempStateX = 0;
     end else begin
       tempStateX = '{
         pc_X: stateD.pc_D,
@@ -949,14 +1371,6 @@ module DatapathAxilMemory (
       };
     end
   end
-
-  wire [255:0] d_disasm;
-  Disasm #(
-      .PREFIX("D")
-  ) disasm_1decode (
-      .insn  (stateD.insn_D),
-      .disasm(d_disasm)
-  );
 
   /****************/
   /* EXECUTE STAGE */
@@ -986,7 +1400,7 @@ module DatapathAxilMemory (
       };
     end else begin
       begin
-        if (branch_taken) begin
+        if (branch_taken || branch_taken_m ) begin
             stateX <= 0;
             stateX.cycle_status_X <= CYCLE_TAKEN_BRANCH;
         end else if (loadStall) begin
@@ -1039,23 +1453,29 @@ module DatapathAxilMemory (
         x_rs2_data = stateM.rd_val_M;
       end if (w_rd_no == x_rs1_no && w_rd_no != x_rs2_no && w_rd_no != m_rd_no && w_rd_no != 0) begin
         mux_val_mx_wx = 4;
-        x_rs1_data = stateW.rd_val_W;
+        // x_rs1_data = stateW.rd_val_W;
+        x_rs1_data = rd_val_mem_temp;
       end if (w_rd_no == x_rs2_no && w_rd_no != x_rs1_no && w_rd_no != m_rd_no && w_rd_no != 0) begin
         mux_val_mx_wx = 5;
-        x_rs2_data = stateW.rd_val_W;
+        // x_rs2_data = stateW.rd_val_W;
+        x_rs2_data = rd_val_mem_temp;
       end if (w_rd_no == x_rs1_no && w_rd_no == x_rs2_no && w_rd_no != m_rd_no && w_rd_no != 0) begin
         mux_val_mx_wx = 6;
-        x_rs2_data = stateW.rd_val_W;
-        x_rs1_data = stateW.rd_val_W;
+        // x_rs2_data = stateW.rd_val_W;
+        // x_rs1_data = stateW.rd_val_W;
+        x_rs2_data = rd_val_mem_temp;
+        x_rs1_data = rd_val_mem_temp;
         // edited: case for handling double bypass
       end if (m_rd_no == x_rs1_no && w_rd_no == x_rs2_no && x_rs1_no != x_rs2_no && (w_rd_no != 0 && m_rd_no != 0)) begin
         mux_val_mx_wx = 7;
         x_rs1_data = stateM.rd_val_M;
-        x_rs2_data = stateW.rd_val_W;
+        // x_rs2_data = stateW.rd_val_W;
+        x_rs2_data = rd_val_mem_temp;
       end if (m_rd_no == x_rs2_no && w_rd_no == x_rs1_no && x_rs1_no != x_rs2_no && (w_rd_no != 0 && m_rd_no != 0)) begin
         mux_val_mx_wx = 8;
         x_rs2_data = stateM.rd_val_M;
-        x_rs1_data = stateW.rd_val_W;
+        // x_rs1_data = stateW.rd_val_W;
+        x_rs1_data = rd_val_mem_temp;
       end
     end
 
@@ -1397,7 +1817,9 @@ module DatapathAxilMemory (
 
       OpcodeLoad: begin
         if(((stateM.insn_opcode_M == OpcodeRegReg) || (stateM.insn_opcode_M == OpcodeRegImm) && (stateM.rd_no_M == stateX.rs1_no_X))||
-         ((stateW.insn_opcode_W == OpcodeRegReg) || (stateW.insn_opcode_W == OpcodeRegImm) && (stateW.rd_no_W == stateX.rs1_no_X)))
+         ((stateW.insn_opcode_W == OpcodeRegReg) || (stateW.insn_opcode_W == OpcodeRegImm) && (stateW.rd_no_W == stateX.rs1_no_X)) ||
+         ((stateM.insn_opcode_M == OpcodeAuipc) && (stateM.rd_no_M == stateX.rs1_no_X)) ||
+          ((stateW.insn_opcode_W == OpcodeAuipc) && (stateW.rd_no_W == stateX.rs1_no_X)))
           begin
             if(stateM.rd_no_M == stateX.rs1_no_X)
               address_bits_temp = stateM.rd_val_M+ stateX.imm_i_sext_X;
@@ -1417,25 +1839,22 @@ module DatapathAxilMemory (
     endcase
   end
 
+      // Rest of the code remains unchanged
+  // end
+
+
   /****************/
   /* MEMORY STAGE */
   /****************/
+  assign lw_stall_m = stateM.lw_stall_m;
+  assign div_stall_m = stateM.div_stall_m;
+  assign mux_fence_m = stateM.mux_fence_m;
+  assign branch_taken_m = stateM.branch_taken_M;
+
   stage_memory_t stateM;
   logic [31:0] rd_val_temp;//Temporary variable to store the value to be written to the register file in memory stage
   logic [31:0]stateM_store_data_to_dmem;
   logic [3:0]stateM_store_we_to_dmem_M; 
-  logic [`REG_SIZE] addr_to_dmem_temp;
-  // logic [31:0] address_bits_temp;
-  logic [`REG_SIZE] rd_val_mem_temp;
-  logic [`REG_SIZE] rs1_val_temp;
-  logic [`REG_SIZE] rs2_val_temp;
-  logic [`REG_SIZE] store_data_temp_mem;
-  logic [`REG_SIZE] address_bits_mem;
-  logic [`REG_SIZE] store_data_to_dmem_temp;
-  // edited
-  logic [1:0] wm_mux;
-  logic [1:0] div_rem_mux;
-  logic [`REG_SIZE] div_rem_two_cycle_data;
   // assign addr_to_dmem = stateM.addr_to_dmem_M & 32'hFFFFFFFC;
 
   always_ff @(posedge clk) begin
@@ -1458,6 +1877,9 @@ module DatapathAxilMemory (
         branch_taken_M: 0,
         address_bits_M: 0,
         pcNext_M: 0,
+        lw_stall_m: 0,
+        div_stall_m: 0,
+        mux_fence_m: 0,
         mem_control_M: '{default:0}
 
       };
@@ -1483,7 +1905,10 @@ module DatapathAxilMemory (
           branch_taken_M: branch_taken,
           address_bits_M: address_bits_temp,
           pcNext_M: pcNext,
-          mem_control_M: stateX.exe_control_X
+          lw_stall_m: loadStall,
+          div_stall_m: divStall,
+          mux_fence_m: fenceStall,
+          mem_control_M: stateX.exe_control_X//fenceStall || divStall || loadStall
         };
       end
     end
@@ -1497,6 +1922,33 @@ module DatapathAxilMemory (
       .disasm(m_disasm)
   );
 
+  logic [`REG_SIZE] addr_to_dmem_temp;
+  // logic [31:0] address_bits_temp;
+  logic [`REG_SIZE] rd_val_mem_temp;
+  logic [`REG_SIZE] rs1_val_temp;
+  logic [`REG_SIZE] rs2_val_temp;
+  logic [`REG_SIZE] store_data_temp_mem;
+  logic [`REG_SIZE] address_bits_mem;
+  logic [`REG_SIZE] store_data_to_dmem_temp;
+
+  logic [`REG_SIZE] addr_to_dmem_rdata;
+  logic [`REG_SIZE] addr_to_dmem_wdata;
+  logic [`REG_SIZE] rdata_data_from_dmem_temp;
+  logic [`REG_SIZE] wdata_data_to_dmem_temp;
+  //logic [3:0] rdata_we_to_dmem_temp;
+  logic [3:0] wdata_we_to_dmem_temp;
+  //logic rdata_valid;
+  logic wdata_valid;
+  logic ardata_valid;
+  logic awdata_valid;
+  logic rdata_ready;
+  logic wdata_bready;
+
+  // edited
+  logic [1:0] wm_mux;
+  logic [1:0] div_rem_mux;
+  logic [`REG_SIZE] div_rem_two_cycle_data;
+
   always_latch begin
   
     divMulticycle = 0;
@@ -1504,7 +1956,19 @@ module DatapathAxilMemory (
     selectDivider = 0;
     wm_mux = 2'b0;
 
-    store_we_to_dmem_temp = 0;
+    addr_to_dmem_wdata = 0;
+    wdata_we_to_dmem_temp = 0;
+    wdata_data_to_dmem_temp = 0;
+    awdata_valid = 0;
+    wdata_valid = 0;
+    wdata_bready = 0;
+
+    //addr_to_dmem_rdata = 0;
+    //rdata_data_from_dmem_temp = 0;
+    ardata_valid = 0;
+    //rdata_ready = 0;
+
+    // store_we_to_dmem_temp = 0;
     
     if (stateW.insn_opcode_W == OpcodeLoad && stateW.rd_no_W != 5'b0) begin
       if (stateW.rd_no_W == stateM.rs2_no_M && stateW.rd_no_W != stateM.rs1_no_M) begin
@@ -1554,125 +2018,96 @@ module DatapathAxilMemory (
     
     case (stateM.insn_opcode_M)
       OpcodeStore: begin
-        addr_to_dmem_temp = (address_bits_mem & 32'hFFFF_FFFC);
-        store_data_temp_mem = (wm_mux == 2'b1 || wm_mux == 2'b11) ? stateW.rd_val_W : stateM.rs2_data_temp_M;
+        // addr_to_dmem_temp = (address_bits_mem & 32'hFFFF_FFFC);
+        addr_to_dmem_wdata = (address_bits_mem & 32'hFFFF_FFFC);
+        awdata_valid = 1'b1;
+        // store_data_temp_mem = (wm_mux == 2'b1 || wm_mux == 2'b11) ? stateW.rd_val_W : stateM.rs2_data_temp_M;
+
+        store_data_temp_mem = (wm_mux == 2'b1 || wm_mux == 2'b11) ? rd_val_mem_temp : stateM.rs2_data_temp_M;
         if(stateM.mem_control_M.insn_sb)begin
           //store_data_to_dmem_temp = (wm_mux == 2'b10) ? {{4{stateW.rd_val_W[7:0]}}} : {{4{stateM.rs2_data_temp_M[7:0]}}};
           if(address_bits_mem[1:0] == 2'b00) begin
-            store_data_to_dmem_temp = {{24{1'b0}},{store_data_temp_mem[7:0]}};
-            store_we_to_dmem_temp = 4'b0001;
+            // store_data_to_dmem_temp = {{24{1'b0}},{store_data_temp_mem[7:0]}};
+            // store_we_to_dmem_temp = 4'b0001;
+
+            wdata_data_to_dmem_temp = {{24{1'b0}},{store_data_temp_mem[7:0]}};
+            wdata_we_to_dmem_temp = 4'b0001;
+            wdata_valid = 1'b1;
+            wdata_bready = 1'b1;
           end
           else if(address_bits_mem[1:0] == 2'b01)begin
-            store_data_to_dmem_temp = {{16{1'b0}},{store_data_temp_mem[7:0]},{8{1'b0}}};
-            store_we_to_dmem_temp= 4'b0010;
+            // store_data_to_dmem_temp = {{16{1'b0}},{store_data_temp_mem[7:0]},{8{1'b0}}};
+            // store_we_to_dmem_temp= 4'b0010;
+
+            wdata_data_to_dmem_temp = {{16{1'b0}},{store_data_temp_mem[7:0]},{8{1'b0}}};
+            wdata_we_to_dmem_temp = 4'b0010;
+            wdata_valid = 1'b1;
+            wdata_bready = 1'b1;
           end
           else if(address_bits_mem[1:0] == 2'b10) begin 
-            store_data_to_dmem_temp = {{8{1'b0}},{store_data_temp_mem[7:0]},{16{1'b0}}};
-            store_we_to_dmem_temp= 4'b0100;
+            // store_data_to_dmem_temp = {{8{1'b0}},{store_data_temp_mem[7:0]},{16{1'b0}}};
+            // store_we_to_dmem_temp= 4'b0100;
+            wdata_data_to_dmem_temp = {{8{1'b0}},{store_data_temp_mem[7:0]},{16{1'b0}}};
+            wdata_we_to_dmem_temp = 4'b0100;
+            wdata_valid = 1'b1;
+            wdata_bready = 1'b1;
           end
           else begin
-            store_data_to_dmem_temp = {{store_data_temp_mem[7:0]},{24{1'b0}}};
-            store_we_to_dmem_temp= 4'b1000; 
+            // store_data_to_dmem_temp = {{store_data_temp_mem[7:0]},{24{1'b0}}};
+            // store_we_to_dmem_temp= 4'b1000; 
+            wdata_data_to_dmem_temp = {{store_data_temp_mem[7:0]},{24{1'b0}}};
+            wdata_we_to_dmem_temp = 4'b1000;
+            wdata_valid = 1'b1;
+            wdata_bready = 1'b1;
           end 
         end
         else if(stateM.mem_control_M.insn_sh)begin
           //store_data_to_dmem_temp = (wm_mux == 2'b10) ? {{2{stateW.rd_val_W[15:0]}}} : {{2{stateM.rs2_data_temp_M[15:0]}}};
           if(address_bits_mem[1:0] == 2'b00) begin
-            store_data_to_dmem_temp = {{16{1'b0}},{store_data_temp_mem[15:0]}};
-            store_we_to_dmem_temp= 4'b0011;
+            // store_data_to_dmem_temp = {{16{1'b0}},{store_data_temp_mem[15:0]}};
+            // store_we_to_dmem_temp= 4'b0011;
+            wdata_data_to_dmem_temp = {{16{1'b0}},{store_data_temp_mem[15:0]}};
+            wdata_we_to_dmem_temp= 4'b0011;
+            wdata_valid = 1'b1;
+            wdata_bready = 1'b1;
           end
           else begin
-            store_data_to_dmem_temp = {{store_data_temp_mem[15:0]},{16{1'b0}}};
-            store_we_to_dmem_temp= 4'b1100;
+            // store_data_to_dmem_temp = {{store_data_temp_mem[15:0]},{16{1'b0}}};
+            // store_we_to_dmem_temp= 4'b1100;
+            wdata_data_to_dmem_temp = {{store_data_temp_mem[15:0]},{16{1'b0}}};
+            wdata_we_to_dmem_temp= 4'b1100;
+            wdata_valid = 1'b1;
+            wdata_bready = 1'b1;
           end 
         end
         else if(stateM.mem_control_M.insn_sw)begin 
-          store_data_to_dmem_temp = (wm_mux == 2'b1 || wm_mux == 2'b11) ? stateW.rd_val_W : stateM.rs2_data_temp_M;
-          store_we_to_dmem_temp= 4'b1111;
+        //   store_data_to_dmem_temp = (wm_mux == 2'b1 || wm_mux == 2'b11) ? stateW.rd_val_W : stateM.rs2_data_temp_M;
+        //   store_we_to_dmem_temp= 4'b1111;
+          wdata_data_to_dmem_temp = (wm_mux == 2'b1 || wm_mux == 2'b11) ? rd_val_mem_temp : stateM.rs2_data_temp_M; 
+          wdata_we_to_dmem_temp= 4'b1111;
+          wdata_valid = 1'b1;
+          wdata_bready = 1'b1;
         end
-        // else begin 
-        //   illegal_insn = 1'b1;
-        // end
       end
 
       OpcodeLoad: begin
         address_bits_mem = stateM.address_bits_M;
-        addr_to_dmem_temp = (address_bits_mem & 32'hFFFF_FFFC);
-        if(stateM.mem_control_M.insn_lb) begin
-          if(address_bits_mem[1:0] == 2'b00) begin
-            // rd_val_mem_temp = {{24{load_data_from_dmem[7]}},load_data_from_dmem[7:0]}; 
-            rd_val_mem_temp = {{24{dmem.RDATA[7]}},dmem.RDATA[7:0]}; 
-          end 
-          else if(address_bits_mem[1:0] == 2'b01) begin 
-            rd_val_mem_temp = {{24{dmem.RDATA[15]}},dmem.RDATA[15:8]};
-          end 
-          else if(address_bits_mem[1:0] == 2'b10) begin 
-            rd_val_mem_temp = {{24{dmem.RDATA[23]}},dmem.RDATA[23:16]};
-          end 
-          else begin
-            rd_val_mem_temp = {{24{dmem.RDATA[31]}},dmem.RDATA[31:24]};  
-          end 
-        end  
-        else if(stateM.mem_control_M.insn_lh)begin 
-          if(address_bits_mem[1:0] == 2'b00) begin
-            rd_val_mem_temp = {{16{dmem.RDATA[15]}},dmem.RDATA[15:0]}; 
-          end 
-          else begin
-            rd_val_mem_temp = {{16{dmem.RDATA[31]}},dmem.RDATA[31:16]}; 
-          end 
-        end
-        else if(stateM.mem_control_M.insn_lw)begin 
-          rd_val_mem_temp = dmem.RDATA[31:0]; 
-        end 
-        else if(stateM.mem_control_M.insn_lbu)begin 
-          if(address_bits_mem[1:0] == 2'b00) begin 
-            rd_val_mem_temp = {{24'b0},dmem.RDATA[7:0]}; 
-          end 
-          else if(address_bits_mem[1:0] == 2'b01) begin
-            rd_val_mem_temp = {{24'b0},dmem.RDATA[15:8]};
-          end 
-          else if(address_bits_mem[1:0] == 2'b10) begin
-            rd_val_mem_temp = {{24'b0},dmem.RDATA[23:16]};
-          end 
-          else begin
-          rd_val_mem_temp = {{24'b0},dmem.RDATA[31:24]};
-          end 
-        end 
-        else if(stateM.mem_control_M.insn_lhu)begin 
-          if(address_bits_mem[1:0] == 2'b00) begin
-            rd_val_mem_temp = {{16'b0},dmem.RDATA[15:0]}; 
-          end 
-          else begin
-            rd_val_mem_temp = {{16'b0},dmem.RDATA[31:16]}; 
-          end 
-        end  
-        // else begin
-        //   illegal_insn = 1'b1; 
-        // end
+        addr_to_dmem_rdata = (address_bits_mem & 32'hFFFF_FFFC);
+        ardata_valid = 1'b1;
       end
 
       default: begin
-        rd_val_mem_temp = stateM.rd_val_M;
+        // rd_val_mem_temp = stateM.rd_val_M;
       end
   endcase
     end
+  // end
+  
+
   /****************/
   /* WRITEBACK STAGE */
   /****************/
   stage_write_t stateW;
-
-  assign dmem.WSTRB = store_we_to_dmem_temp;
-  assign dmem.WDATA = store_data_to_dmem_temp;
-  assign we = (stateW.insn_opcode_W == OpcodeBranch ||
-                  stateW.insn_opcode_W == OpcodeStore) ||
-                  (stateW.rd_no_W == 0)? 1'b0 : 1'b1;//If not store or branch or rd_no is 0, we = 1
-  assign halt = stateW.halt_sig_W;
-  assign dmem.AWADDR = addr_to_dmem_temp;
-
-  assign trace_writeback_cycle_status = stateW.cycle_status_W;
-  assign trace_writeback_pc = stateW.pc_W;
-  assign trace_writeback_insn = stateW.insn_W;
-
   always_ff @(posedge clk) begin
     if (rst) begin
       stateW <= '{
@@ -1688,7 +2123,9 @@ module DatapathAxilMemory (
         insn_opcode_W: 0,
         halt_sig_W: 0,
         store_data_to_dmem_W:'{default:0},
-        store_we_to_dmem_W:'{default:0}
+        store_we_to_dmem_W:'{default:0},
+        address_bits_wb: 0,
+        write_control_W: 0
         
       };
     end else begin
@@ -1698,8 +2135,15 @@ module DatapathAxilMemory (
           insn_W: stateM.insn_M,
           cycle_status_W: stateM.cycle_status_M,
           rd_no_W: stateM.rd_no_M,
+          // rd_val_W: ((selectDivider == 2'b1 || selectDivider == 2'b10) ?
+          //             divMulticycle : (stateM.insn_opcode_M == OpcodeLoad) ?
+          //             rd_val_temp : stateM.rd_val_M),
+        //   rd_val_W: selectDivider == 2'b1 || selectDivider == 2'b10 ? 
+        //           divMulticycle : rd_val_mem_temp,
           rd_val_W: selectDivider == 2'b1 || selectDivider == 2'b10 ? 
-                  divMulticycle : rd_val_mem_temp,
+                  divMulticycle : stateM.rd_val_M,
+          // rd_val_W: selectDivider == 2'b1 || selectDivider == 2'b10 ? 
+          //         divMulticycle : rd_val_mem_temp,
           rs1_no_W: stateM.rs1_no_M,
           rs1_data_temp_W: stateM.rs1_data_temp_M,
           rs2_no_W: stateM.rs2_no_M,
@@ -1707,12 +2151,14 @@ module DatapathAxilMemory (
           insn_opcode_W: stateM.insn_opcode_M,
           halt_sig_W: stateM.halt_sig_M,
           store_data_to_dmem_W: stateM_store_data_to_dmem,
-          store_we_to_dmem_W: stateM_store_we_to_dmem_M
+          store_we_to_dmem_W: stateM_store_we_to_dmem_M,
+          address_bits_wb: stateM.address_bits_M,
+          write_control_W: stateM.mem_control_M
         };
       end
     end
-    dmem.AWVALID <= dmem.AWVALID^1'b1;
-    dmem.WVALID <= dmem.WVALID^1'b1;
+    // dmem.AWVALID <= dmem.AWVALID^1'b1;
+    // dmem.WVALID <= dmem.WVALID^1'b1;
   end
 
   wire [255:0] wb_disasm;
@@ -1723,7 +2169,117 @@ module DatapathAxilMemory (
       .disasm(wb_disasm)
   );
 
+  always_comb begin
+    rd_val_mem_temp = stateW.rd_val_W;
+    rdata_ready = 0;
 
+    if (stateW.insn_opcode_W == OpcodeLoad) begin
+      if(stateW.write_control_W.insn_lb) begin
+        if(stateW.address_bits_wb[1:0] == 2'b00) begin
+          //rd_val_mem_temp = {{24{load_data_from_dmem[7]}},load_data_from_dmem[7:0]};
+          rd_val_mem_temp = {{24{rdata_data_from_dmem_temp[7]}},rdata_data_from_dmem_temp[7:0]};
+          rdata_ready = 1'b1;
+          //assign f_insn = imem.RDATA;
+        end 
+        else if(stateW.address_bits_wb[1:0] == 2'b01) begin 
+          //rd_val_mem_temp = {{24{load_data_from_dmem[15]}},load_data_from_dmem[15:8]};
+          rd_val_mem_temp = {{24{rdata_data_from_dmem_temp[15]}},rdata_data_from_dmem_temp[15:8]};
+          rdata_ready = 1'b1;
+        end 
+        else if(stateW.address_bits_wb[1:0] == 2'b10) begin 
+          //rd_val_mem_temp = {{24{load_data_from_dmem[23]}},load_data_from_dmem[23:16]};
+          rd_val_mem_temp = {{24{rdata_data_from_dmem_temp[23]}},rdata_data_from_dmem_temp[23:16]};
+          rdata_ready = 1'b1;
+        end 
+        else begin
+          //rd_val_mem_temp = {{24{load_data_from_dmem[31]}},load_data_from_dmem[31:24]}; 
+          rd_val_mem_temp = {{24{rdata_data_from_dmem_temp[31]}},rdata_data_from_dmem_temp[31:24]};
+          rdata_ready = 1'b1;
+        end 
+      end  
+      else if(stateW.write_control_W.insn_lh)begin 
+        if(stateW.address_bits_wb[1:0] == 2'b00) begin
+          //rd_val_mem_temp = {{16{load_data_from_dmem[15]}},load_data_from_dmem[15:0]};
+          rd_val_mem_temp = {{16{rdata_data_from_dmem_temp[15]}},rdata_data_from_dmem_temp[15:0]};
+          rdata_ready = 1'b1; 
+        end 
+        else begin
+          //rd_val_mem_temp = {{16{load_data_from_dmem[31]}},load_data_from_dmem[31:16]};
+          rd_val_mem_temp = {{16{rdata_data_from_dmem_temp[31]}},rdata_data_from_dmem_temp[31:16]}; 
+          rdata_ready = 1'b1; 
+        end 
+      end
+      else if(stateW.write_control_W.insn_lw)begin 
+        //rd_val_mem_temp = load_data_from_dmem[31:0];
+        rd_val_mem_temp = rdata_data_from_dmem_temp[31:0];
+        rdata_ready = 1'b1; 
+      end 
+      else if(stateW.write_control_W.insn_lbu)begin 
+        if(stateW.address_bits_wb[1:0] == 2'b00) begin 
+          //rd_val_mem_temp = {{24'b0},load_data_from_dmem[7:0]};
+          rd_val_mem_temp = {{24'b0}, rdata_data_from_dmem_temp[7:0]};
+          rdata_ready = 1'b1;
+        end 
+        else if(stateW.address_bits_wb[1:0] == 2'b01) begin
+          //rd_val_mem_temp = {{24'b0},load_data_from_dmem[15:8]};
+          rd_val_mem_temp = {{24'b0},rdata_data_from_dmem_temp[15:8]};
+          rdata_ready = 1'b1;
+        end 
+        else if(stateW.address_bits_wb[1:0] == 2'b10) begin
+          //rd_val_mem_temp = {{24'b0},load_data_from_dmem[23:16]};
+          rd_val_mem_temp = {{24'b0},rdata_data_from_dmem_temp[23:16]};
+          rdata_ready = 1'b1;
+        end 
+        else begin
+          //rd_val_mem_temp = {{24'b0},load_data_from_dmem[31:24]};
+          rd_val_mem_temp = {{24'b0},rdata_data_from_dmem_temp[31:24]};
+          rdata_ready = 1'b1;
+        end 
+      end 
+      else if(stateW.write_control_W.insn_lhu)begin 
+        if(stateW.address_bits_wb[1:0] == 2'b00) begin
+          //rd_val_mem_temp = {{16'b0},load_data_from_dmem[15:0]};
+          rd_val_mem_temp = {{16'b0},rdata_data_from_dmem_temp[15:0]};
+          rdata_ready = 1'b1;
+        end 
+        else begin
+          //rd_val_mem_temp = {{16'b0},load_data_from_dmem[31:16]};
+          rd_val_mem_temp = {{16'b0},rdata_data_from_dmem_temp[31:16]};
+          rdata_ready = 1'b1;
+        end 
+      end
+    end
+  end
+
+  // assign store_data_to_dmem = stateW.store_data_to_dmem_W;
+  // assign store_we_to_dmem = stateW.store_we_to_dmem_W;
+  // assign addr_to_dmem = addr_to_dmem_temp;
+//   assign dmem.WSTRB = store_we_to_dmem_temp;
+//   assign dmem.WDATA = store_data_to_dmem_temp;
+  assign we = (stateW.insn_opcode_W == OpcodeBranch ||
+                  stateW.insn_opcode_W == OpcodeStore) ||
+                  (stateW.rd_no_W == 0)? 1'b0 : 1'b1;//If not store or branch or rd_no is 0, we = 1
+  assign halt = stateW.halt_sig_W;
+//   assign dmem.AWADDR = addr_to_dmem_temp;
+
+  assign dmem.AWADDR = addr_to_dmem_wdata;
+  assign dmem.WSTRB = wdata_we_to_dmem_temp;
+  assign dmem.WDATA = wdata_data_to_dmem_temp;
+  assign dmem.AWVALID = awdata_valid;
+  assign dmem.WVALID = wdata_valid;
+  assign dmem.BREADY = wdata_bready;
+
+  assign dmem.ARADDR = addr_to_dmem_rdata;
+  assign rdata_data_from_dmem_temp = dmem.RDATA;
+  assign dmem.ARVALID = ardata_valid;
+  assign dmem.RREADY = rdata_ready;
+
+  // assign addr_to_dmem = addr_to_dmem_temp & 32'hFFFFFFFC;
+  // assign addr_to_dmem = stateM.addr_to_dmem_M & 32'hFFFFFFFC;
+
+  assign trace_writeback_cycle_status = stateW.cycle_status_W;
+  assign trace_writeback_pc = stateW.pc_W;
+  assign trace_writeback_insn = stateW.insn_W;
 endmodule
 
 module MemorySingleCycle #(
